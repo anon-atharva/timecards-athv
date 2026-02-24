@@ -1,0 +1,5 @@
+{
+  "name": "Timecards",
+  "description": "Institutional Timetable Management System for academic scheduling with conflict detection and auto-allocation.",
+  "requestFramePermissions": []
+}

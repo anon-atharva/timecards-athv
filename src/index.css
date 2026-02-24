@@ -1,0 +1,70 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Instrument Serif", serif;
+
+  /* Primary Base Palette */
+  --color-deep-navy: #0F172A;
+  --color-midnight-blue: #1E293B;
+  --color-slate-blue: #334155;
+  --color-muted-steel: #64748B;
+  --color-border-blue-gray: #0A0F1E; /* Darker for better contrast against midnight-blue */
+  --color-muted-teal: #2A9D8F;
+
+  --shadow-soft: none; /* No glow/shadow effects as per rules */
+}
+
+@layer base {
+  body {
+    @apply bg-deep-navy text-slate-100 font-sans antialiased;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply not-italic font-semibold tracking-tight;
+  }
+}
+
+.institutional-grid {
+  @apply border-collapse border border-border-blue-gray bg-midnight-blue;
+}
+
+.institutional-grid th {
+  @apply border border-border-blue-gray p-4 bg-deep-navy text-muted-steel text-xs font-bold uppercase tracking-wider;
+}
+
+.institutional-grid td {
+  @apply border border-border-blue-gray p-4;
+}
+
+.sidebar-stack {
+  @apply space-y-4 mb-8;
+}
+
+.chip {
+  @apply bg-midnight-blue border border-border-blue-gray px-3 py-2 rounded-md text-sm flex items-center justify-between cursor-grab active:cursor-grabbing transition-colors hover:bg-slate-blue text-slate-200;
+}
+
+.btn-teal {
+  @apply bg-muted-teal text-white px-4 py-2 rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50 not-italic border-none shadow-none;
+}
+
+.btn-outline {
+  @apply border border-border-blue-gray px-4 py-2 rounded-md font-medium hover:bg-slate-blue transition-colors text-muted-steel not-italic;
+}
+
+/* Custom scrollbar for dark mode */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0F172A;
+}
+::-webkit-scrollbar-thumb {
+  background: #1F2A3A;
+  border-radius: 0px; /* Flat design */
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}

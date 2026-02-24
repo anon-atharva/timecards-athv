@@ -870,7 +870,29 @@ export default function App() {
               <p className="text-[10px] text-muted-steel mt-2 text-center uppercase tracking-widest">
                 Based on subject weightage
               </p>
-              <div className="pt-4 border-t border-border-blue-gray space-y-2">
+            </div>
+
+            <div className="flex-1">
+              <SidebarSection 
+                title="Subjects & Professors" 
+                items={subjects} 
+                type="subject" 
+                onAdd={(name, extra) => addEntity('subjects', name, extra)}
+                onRemove={(id) => removeEntity('subjects', id)}
+                onUpdate={(type, id, data) => updateEntity(type as any, id, data)}
+                professors={professors}
+                onRequestAddProfessor={requestAddProfessor}
+                classes={classes}
+              />
+              <div className="border-t border-border-blue-gray my-8" />
+              <SidebarSection 
+                title="Classrooms" 
+                items={classrooms} 
+                type="classroom" 
+                onAdd={(name) => addEntity('classrooms', name)}
+                onRemove={(id) => removeEntity('classrooms', id)}
+              />
+              <div className="pt-4 space-y-2">
                 <input
                   ref={importInputRef}
                   type="file"
@@ -903,28 +925,6 @@ export default function App() {
                   Saves Subjects, Professors, Classrooms
                 </p>
               </div>
-            </div>
-
-            <div className="flex-1">
-              <SidebarSection 
-                title="Subjects & Professors" 
-                items={subjects} 
-                type="subject" 
-                onAdd={(name, extra) => addEntity('subjects', name, extra)}
-                onRemove={(id) => removeEntity('subjects', id)}
-                onUpdate={(type, id, data) => updateEntity(type as any, id, data)}
-                professors={professors}
-                onRequestAddProfessor={requestAddProfessor}
-                classes={classes}
-              />
-              <div className="border-t border-border-blue-gray my-8" />
-              <SidebarSection 
-                title="Classrooms" 
-                items={classrooms} 
-                type="classroom" 
-                onAdd={(name) => addEntity('classrooms', name)}
-                onRemove={(id) => removeEntity('classrooms', id)}
-              />
             </div>
           </aside>
         </main>

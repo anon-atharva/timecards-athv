@@ -172,55 +172,63 @@ const DroppableCell = ({
   const professorColor = professor?.color;
 
   return (
-    <div className="h-20 border-b border-border-blue-gray last:border-b-0 px-1.5 py-1 overflow-hidden">
-      <div
-        className={cn(
-          "w-full h-full rounded-md overflow-hidden relative group border border-border-blue-gray px-2.5 py-1.5 bg-midnight-blue/80",
-          professorColor && "border-l-4"
-        )}
-        style={{
-          ...(professorColor
-            ? {
-                borderLeftColor: professorColor,
-                backgroundColor: hexToRgba(professorColor, entry?.exception_flag ? 0.22 : 0.18),
-              }
-            : {}),
-        }}
-      >
+    <div className="h-24 border-b border-border-blue-gray last:border-b-0 px-1.5 py-1.5 overflow-hidden">
       <AnimatePresence mode="popLayout">
-        {entry && (
+        {entry ? (
           <motion.div 
             key={`${entry.day}-${entry.time_slot}-${entry.class_id}-${entry.batch_id}`}
-            initial={{ opacity: 0, scale: 0.9 }}
+            initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.9 }}
+            exit={{ opacity: 0, scale: 0.95 }}
             className="w-full h-full"
           >
-            <div className="flex flex-col leading-snug pr-5">
-              <span className="font-semibold text-[13px] text-muted-teal truncate">
-                {subject?.name || '---'}
-              </span>
-              <span className="text-[11px] text-slate-100 truncate">
-                {professor?.name || '—'}
-              </span>
-              <span className="text-[11px] text-muted-steel truncate">
-                {classroom?.name || '—'}
-              </span>
-            </div>
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                onClear();
+            <div
+              className={cn(
+                "w-full h-full rounded-md overflow-hidden relative group border border-border-blue-gray px-3 py-2 bg-midnight-blue/90 flex flex-col justify-center",
+                professorColor && "border-l-4"
+              )}
+              style={{
+                ...(professorColor
+                  ? {
+                      borderLeftColor: professorColor,
+                      backgroundColor: hexToRgba(professorColor, entry?.exception_flag ? 0.24 : 0.20),
+                    }
+                  : {}),
               }}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-blue rounded absolute right-1 top-1 bg-midnight-blue border border-border-blue-gray shadow-none z-10"
             >
-              <X className="w-3 h-3" />
-            </button>
+              <div className="flex flex-col leading-snug pr-6 gap-0.5">
+                <span className="font-semibold text-[14px] text-muted-teal truncate">
+                  {subject?.name || '---'}
+                </span>
+                <span className="text-[12px] text-slate-100 truncate">
+                  {professor?.name || '—'}
+                </span>
+                <span className="text-[12px] text-muted-steel truncate">
+                  {classroom?.name || '—'}
+                </span>
+              </div>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClear();
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-blue rounded absolute right-1 top-1 bg-midnight-blue border border-border-blue-gray shadow-none z-10"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
           </motion.div>
+        ) : (
+          <motion.div
+            key={`empty-${day}-${slotIdx}-${classId}-${batchId}`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="w-full h-full"
+          />
         )}
       </AnimatePresence>
-      </div>
     </div>
   );
 };

@@ -170,71 +170,53 @@ const DroppableCell = ({
   const professor = professors.find(p => p.id === entry?.professor_id);
   const classroom = classrooms.find(c => c.id === entry?.classroom_id);
   const professorColor = professor?.color;
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `entry:${day}:${slotIdx}:${classId}:${batchId}`,
-    disabled: !entry,
-  });
 
   return (
-    <div className="h-24 border-b border-border-blue-gray last:border-b-0 px-1.5 py-1.5 overflow-hidden">
+    <div
+      className={cn(
+        "h-20 border-b border-border-blue-gray last:border-b-0 px-2 py-1.5 overflow-hidden relative group border-l border-l-border-blue-gray",
+        professorColor && "border-l-4"
+      )}
+      style={{
+        ...(professorColor
+          ? {
+              borderLeftColor: professorColor,
+              backgroundColor: hexToRgba(professorColor, entry?.exception_flag ? 0.16 : 0.10),
+            }
+          : {}),
+      }}
+    >
       <AnimatePresence mode="popLayout">
-        {entry ? (
+        {entry && (
           <motion.div 
             key={`${entry.day}-${entry.time_slot}-${entry.class_id}-${entry.batch_id}`}
-            initial={{ opacity: 0, scale: 0.95 }}
+            initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className={cn("w-full h-full", isDragging && "opacity-40")}
-            ref={setNodeRef}
-            {...attributes}
-            {...listeners}
-          >
-            <div
-              className={cn(
-                "w-full h-full rounded-md overflow-hidden relative group border border-border-blue-gray px-3 py-2 bg-midnight-blue/90 flex flex-col justify-center cursor-grab active:cursor-grabbing",
-                professorColor && "border-l-4",
-                // Slight transparency when dragging will be applied via parent using dnd-kit
-              )}
-              style={{
-                ...(professorColor
-                  ? {
-                      borderLeftColor: professorColor,
-                      backgroundColor: hexToRgba(professorColor, entry?.exception_flag ? 0.24 : 0.20),
-                    }
-                  : {}),
-              }}
-            >
-              <div className="flex flex-col leading-snug pr-6 gap-0.5">
-                <span className="font-semibold text-[14px] text-muted-teal truncate">
-                  {subject?.name || '---'}
-                </span>
-                <span className="text-[12px] text-slate-100 truncate">
-                  {professor?.name || '—'}
-                </span>
-                <span className="text-[12px] text-muted-steel truncate">
-                  {classroom?.name || '—'}
-                </span>
-              </div>
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClear();
-                }}
-                onPointerDown={(e) => e.stopPropagation()}
-                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-blue rounded absolute right-1 top-1 bg-midnight-blue border border-border-blue-gray shadow-none z-10"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          </motion.div>
-        ) : (
-          <motion.div
-            key={`empty-${day}-${slotIdx}-${classId}-${batchId}`}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            exit={{ opacity: 0, scale: 0.9 }}
             className="w-full h-full"
-          />
+          >
+            <div className="flex flex-col leading-snug pr-5">
+              <span className="font-semibold text-[13px] text-muted-teal truncate">
+                {subject?.name || '---'}
+              </span>
+              <span className="text-[11px] text-slate-100 truncate">
+                {professor?.name || '—'}
+              </span>
+              <span className="text-[11px] text-muted-steel truncate">
+                {classroom?.name || '—'}
+              </span>
+            </div>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                onClear();
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-blue rounded absolute right-1 top-1 bg-midnight-blue border border-border-blue-gray shadow-none z-10"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
@@ -331,28 +313,7 @@ export default function App() {
   const onDragStart = (event: DragStartEvent) => {
     if (!user) return;
     const { active } = event;
-    const [type, ...rest] = (active.id as string).split(':');
-
-    if (type === 'entry') {
-      const [dayStr, slotStr, classStr, batchStr] = rest;
-      const origin = timetable.find(t =>
-        t.day === parseInt(dayStr) &&
-        t.time_slot === parseInt(slotStr) &&
-        t.class_id === parseInt(classStr) &&
-        t.batch_id === parseInt(batchStr)
-      );
-      if (origin) {
-        const subj = subjects.find(s => s.id === origin.subject_id);
-        setActiveDrag({
-          id: active.id as string,
-          type,
-          data: { name: subj?.name ?? '' },
-        });
-      }
-      return;
-    }
-
-    const id = rest[0];
+    const [type, id] = (active.id as string).split(':');
     let data;
     if (type === 'professor') data = professors.find(p => p.id === parseInt(id));
     if (type === 'subject') data = subjects.find(s => s.id === parseInt(id));
@@ -365,37 +326,10 @@ export default function App() {
     setActiveDrag(null);
     if (!over || !user) return;
 
-    const [type, ...rest] = (active.id as string).split(':');
+    const [type, entityId] = (active.id as string).split(':');
     const [targetType, day, slot, classId, batchId] = (over.id as string).split(':');
 
     if (targetType === 'cell') {
-      if (type === 'entry') {
-        const [srcDay, srcSlot, srcClass, srcBatch] = rest;
-        const origin = timetable.find(t =>
-          t.day === parseInt(srcDay) &&
-          t.time_slot === parseInt(srcSlot) &&
-          t.class_id === parseInt(srcClass) &&
-          t.batch_id === parseInt(srcBatch)
-        );
-        if (!origin) return;
-
-        const update = {
-          day: parseInt(day),
-          time_slot: parseInt(slot),
-          class_id: parseInt(classId),
-          batch_id: parseInt(batchId),
-          subject_id: origin.subject_id,
-          professor_id: origin.professor_id,
-          classroom_id: origin.classroom_id,
-          exception_flag: origin.exception_flag,
-        };
-
-        saveEntry(update);
-        clearCell(origin.day, origin.time_slot, origin.class_id, origin.batch_id);
-        return;
-      }
-
-      const entityId = rest[0];
       const entry = timetable.find(t => 
         t.day === parseInt(day) && 
         t.time_slot === parseInt(slot) && 

@@ -172,20 +172,21 @@ const DroppableCell = ({
   const professorColor = professor?.color;
 
   return (
-    <div
-      className={cn(
-        "h-20 border-b border-border-blue-gray last:border-b-0 px-2 py-1.5 overflow-hidden relative group border-l border-l-border-blue-gray",
-        professorColor && "border-l-4"
-      )}
-      style={{
-        ...(professorColor
-          ? {
-              borderLeftColor: professorColor,
-              backgroundColor: hexToRgba(professorColor, entry?.exception_flag ? 0.16 : 0.10),
-            }
-          : {}),
-      }}
-    >
+    <div className="h-20 border-b border-border-blue-gray last:border-b-0 px-1.5 py-1 overflow-hidden">
+      <div
+        className={cn(
+          "w-full h-full rounded-md overflow-hidden relative group border border-border-blue-gray px-2.5 py-1.5 bg-midnight-blue/80",
+          professorColor && "border-l-4"
+        )}
+        style={{
+          ...(professorColor
+            ? {
+                borderLeftColor: professorColor,
+                backgroundColor: hexToRgba(professorColor, entry?.exception_flag ? 0.22 : 0.18),
+              }
+            : {}),
+        }}
+      >
       <AnimatePresence mode="popLayout">
         {entry && (
           <motion.div 
@@ -219,6 +220,7 @@ const DroppableCell = ({
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 };

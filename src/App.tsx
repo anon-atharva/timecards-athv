@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   DndContext, 
   DragOverlay, 
@@ -238,6 +238,8 @@ export default function App() {
   const [conflict, setConflict] = useState<{ message: string, data: any } | null>(null);
   const [isProfessorModalOpen, setIsProfessorModalOpen] = useState(false);
   const [pendingProfessorName, setPendingProfessorName] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [hasLoadedSavedStacks, setHasLoadedSavedStacks] = useState(false);
   const [mondayDate, setMondayDate] = useState<string>(() => {
     const today = new Date();
     const day = today.getDay();
@@ -254,11 +256,189 @@ export default function App() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
+  const LOCAL_STACKS_KEY = 'timecards.stacks.local.v1';
+
+  const reseedCountersFromStacks = (next: { professors: Professor[]; subjects: Subject[]; classrooms: Classroom[] }) => {
+    const maxProfessorId = next.professors.reduce((m, p) => Math.max(m, p.id), 0);
+    const maxSubjectId = next.subjects.reduce((m, s) => Math.max(m, s.id), 0);
+    const maxClassroomId = next.classrooms.reduce((m, c) => Math.max(m, c.id), 0);
+    professorIdCounter = Math.max(professorIdCounter, maxProfessorId + 1);
+    subjectIdCounter = Math.max(subjectIdCounter, maxSubjectId + 1);
+    classroomIdCounter = Math.max(classroomIdCounter, maxClassroomId + 1);
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(LOCAL_STACKS_KEY);
+      if (!raw) {
+        setHasLoadedSavedStacks(true);
+        return;
+      }
+      const parsed = JSON.parse(raw) as any;
+      const next = {
+        professors: Array.isArray(parsed?.professors) ? parsed.professors : [],
+        subjects: Array.isArray(parsed?.subjects) ? parsed.subjects : [],
+        classrooms: Array.isArray(parsed?.classrooms) ? parsed.classrooms : [],
+      };
+
+      setProfessors(next.professors);
+      setSubjects(next.subjects);
+      setClassrooms(next.classrooms);
+      reseedCountersFromStacks(next);
+    } catch {
+      // Ignore corrupted local storage
+    } finally {
+      setHasLoadedSavedStacks(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!hasLoadedSavedStacks) return;
+    try {
+      window.localStorage.setItem(LOCAL_STACKS_KEY, JSON.stringify({
+        version: 1,
+        professors,
+        subjects,
+        classrooms,
+      }));
+    } catch {
+      // Ignore quota / storage errors
+    }
+  }, [professors, subjects, classrooms, hasLoadedSavedStacks]);
+
   useEffect(() => {
     if (selectedYear) {
       setClasses(allClasses.filter(c => c.year_id === selectedYear.id));
     }
   }, [selectedYear, allClasses]);
+
+  type ExportFileV1 = {
+    format: 'timecards-stacks';
+    version: 1;
+    professors: Array<{ name: string; color?: string }>;
+    subjects: Array<{ name: string; weightage?: number; professor?: string; allowedClasses?: string[] }>;
+    classrooms: Array<{ name: string }>;
+  };
+
+  const normalizeColor = (c: unknown) => {
+    if (typeof c !== 'string') return undefined;
+    const s = c.trim();
+    if (/^#([0-9a-fA-F]{3}){1,2}$/.test(s)) return s.toUpperCase();
+    return undefined;
+  };
+
+  const exportStacksToFile = () => {
+    const classNameById = new Map<number, string>(allClasses.map(c => [c.id, c.name]));
+    const professorNameById = new Map<number, string>(professors.map(p => [p.id, p.name]));
+
+    const file: ExportFileV1 = {
+      format: 'timecards-stacks',
+      version: 1,
+      professors: professors.map(p => ({ name: p.name, color: p.color })),
+      subjects: subjects.map(s => ({
+        name: s.name,
+        weightage: s.weightage,
+        professor: s.professor_id ? professorNameById.get(s.professor_id) : undefined,
+        allowedClasses: (s.allowed_class_ids ?? [])
+          .map(id => classNameById.get(id))
+          .filter((x): x is string => typeof x === 'string'),
+      })),
+      classrooms: classrooms.map(c => ({ name: c.name })),
+    };
+
+    const text = JSON.stringify(file, null, 2);
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'timecards-stacks.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const importStacksFromText = (text: string) => {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      alert('Import failed: file is not valid JSON.');
+      return;
+    }
+
+    if (parsed?.format !== 'timecards-stacks' || parsed?.version !== 1) {
+      alert('Import failed: unrecognized file format.');
+      return;
+    }
+
+    const currentYearClasses = classes.length > 0 ? classes : allClasses.filter(c => c.year_id === (selectedYear?.id ?? -1));
+    const classIdByName = new Map<string, number>(currentYearClasses.map(c => [c.name, c.id]));
+
+    const nextProfessors: Professor[] = [];
+    const profIdByName = new Map<string, number>();
+
+    const rawProfs = Array.isArray(parsed?.professors) ? parsed.professors : [];
+    for (const p of rawProfs) {
+      const name = typeof p?.name === 'string' ? p.name.trim() : '';
+      if (!name) continue;
+      const color = normalizeColor(p?.color) ?? COLOR_PALETTE[nextProfessors.length % COLOR_PALETTE.length];
+
+      const existingId = profIdByName.get(name);
+      if (existingId) {
+        const idx = nextProfessors.findIndex(x => x.id === existingId);
+        if (idx !== -1) nextProfessors[idx] = { ...nextProfessors[idx], color };
+        continue;
+      }
+
+      const id = professorIdCounter++;
+      nextProfessors.push({ id, name, color });
+      profIdByName.set(name, id);
+    }
+
+    const rawClassrooms = Array.isArray(parsed?.classrooms) ? parsed.classrooms : [];
+    const nextClassrooms: Classroom[] = [];
+    for (const c of rawClassrooms) {
+      const name = typeof c?.name === 'string' ? c.name.trim() : '';
+      if (!name) continue;
+      nextClassrooms.push({ id: classroomIdCounter++, name });
+    }
+
+    const rawSubjects = Array.isArray(parsed?.subjects) ? parsed.subjects : [];
+    const nextSubjects: Subject[] = [];
+    for (const s of rawSubjects) {
+      const name = typeof s?.name === 'string' ? s.name.trim() : '';
+      if (!name) continue;
+
+      const weightageRaw = s?.weightage;
+      const weightage = typeof weightageRaw === 'number' && Number.isFinite(weightageRaw) ? Math.max(1, Math.round(weightageRaw)) : 1;
+
+      const professorName = typeof s?.professor === 'string' ? s.professor.trim() : '';
+      const professor_id = professorName ? profIdByName.get(professorName) : undefined;
+
+      const allowedNames = Array.isArray(s?.allowedClasses) ? s.allowedClasses : [];
+      const allowed_class_ids = allowedNames
+        .map((n: any) => (typeof n === 'string' ? classIdByName.get(n.trim()) : undefined))
+        .filter((x): x is number => typeof x === 'number');
+
+      nextSubjects.push({
+        id: subjectIdCounter++,
+        name,
+        weightage,
+        professor_id,
+        allowed_class_ids: Array.from(new Set(allowed_class_ids)),
+      });
+    }
+
+    setProfessors(nextProfessors);
+    setSubjects(nextSubjects);
+    setClassrooms(nextClassrooms);
+    setTimetable([]); // imported stacks would otherwise mismatch old IDs
+    reseedCountersFromStacks({ professors: nextProfessors, subjects: nextSubjects, classrooms: nextClassrooms });
+    alert('Imported stacks successfully.');
+  };
 
   const addEntity = (type: 'professors' | 'subjects' | 'classrooms', name: string, extra?: any) => {
     if (!user) return;
@@ -690,6 +870,39 @@ export default function App() {
               <p className="text-[10px] text-muted-steel mt-2 text-center uppercase tracking-widest">
                 Based on subject weightage
               </p>
+              <div className="pt-4 border-t border-border-blue-gray space-y-2">
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const text = await file.text();
+                      importStacksFromText(text);
+                    } finally {
+                      e.currentTarget.value = '';
+                    }
+                  }}
+                />
+                <button
+                  onClick={exportStacksToFile}
+                  className="w-full btn-outline py-2 text-xs"
+                >
+                  SAVE STACKS (EXPORT)
+                </button>
+                <button
+                  onClick={() => importInputRef.current?.click()}
+                  className="w-full btn-outline py-2 text-xs"
+                >
+                  IMPORT STACKS
+                </button>
+                <p className="text-[10px] text-muted-steel text-center uppercase tracking-widest">
+                  Saves Subjects, Professors, Classrooms
+                </p>
+              </div>
             </div>
 
             <div className="flex-1">

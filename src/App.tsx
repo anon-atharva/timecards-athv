@@ -17,6 +17,28 @@ import {
 } from './types';
 
 const INITIAL_YEAR_NAME = 'Spring 2026';
+const COLOR_PALETTE = [
+  '#0EA5E9', // sky
+  '#8B5CF6', // violet
+  '#EC4899', // pink
+  '#F97316', // orange
+  '#F59E0B', // amber
+  '#22C55E', // green
+  '#14B8A6', // teal
+  '#10B981', // emerald
+  '#EF4444', // red
+  '#A3A3A3', // neutral
+] as const;
+
+function hexToRgba(hex: string, alpha: number) {
+  let cleaned = hex.trim().replace('#', '');
+  if (cleaned.length === 3) cleaned = cleaned.split('').map(c => c + c).join('');
+  if (cleaned.length !== 6) return `rgba(0,0,0,${alpha})`;
+  const r = parseInt(cleaned.slice(0, 2), 16);
+  const g = parseInt(cleaned.slice(2, 4), 16);
+  const b = parseInt(cleaned.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 let yearIdCounter = 1;
 let classIdCounter = 1;
@@ -61,6 +83,7 @@ const INITIAL_DATA = createInitialData();
 
 const DraggableChip = ({ id, type, data, onRemove, onUpdate, professors }: { id: string, type: string, data: any, onRemove?: () => void, onUpdate?: (newData: any) => void, professors?: Professor[] }) => {
   const professor = professors?.find(p => p.id === data.professor_id);
+  const professorColor = professor?.color;
   
   return (
     <div 
@@ -69,6 +92,13 @@ const DraggableChip = ({ id, type, data, onRemove, onUpdate, professors }: { id:
     >
       <div className="flex items-center gap-2 overflow-hidden flex-1">
         <GripVertical className="w-4 h-4 text-muted-steel opacity-40 shrink-0" />
+        {professorColor && (
+          <span
+            className="w-2.5 h-2.5 rounded-full shrink-0 border border-border-blue-gray"
+            style={{ backgroundColor: professorColor }}
+            aria-hidden="true"
+          />
+        )}
         <div className="flex flex-col truncate leading-tight">
           <span className="truncate font-medium">{data.name}</span>
           {professor && <span className="text-[10px] text-muted-steel truncate">{professor.name}</span>}
@@ -139,12 +169,22 @@ const DroppableCell = ({
   const subject = subjects.find(s => s.id === entry?.subject_id);
   const professor = professors.find(p => p.id === entry?.professor_id);
   const classroom = classrooms.find(c => c.id === entry?.classroom_id);
+  const professorColor = professor?.color;
 
   return (
     <div className={cn(
-      "h-16 border-b border-border-blue-gray last:border-b-0 flex items-center px-3 gap-2 overflow-hidden relative group",
-      entry?.exception_flag && "bg-slate-blue/20"
-    )}>
+      "h-16 border-b border-border-blue-gray last:border-b-0 flex items-center px-3 gap-2 overflow-hidden relative group border-l border-l-border-blue-gray",
+      professorColor && "border-l-4"
+    )}
+    style={{
+      ...(professorColor
+        ? {
+            borderLeftColor: professorColor,
+            backgroundColor: hexToRgba(professorColor, entry?.exception_flag ? 0.16 : 0.10),
+          }
+        : {}),
+    }}
+    >
       <AnimatePresence mode="popLayout">
         {entry && (
           <motion.div 
@@ -197,6 +237,7 @@ export default function App() {
   const [activeDrag, setActiveDrag] = useState<{ id: string, type: string, data: any } | null>(null);
   const [conflict, setConflict] = useState<{ message: string, data: any } | null>(null);
   const [isProfessorModalOpen, setIsProfessorModalOpen] = useState(false);
+  const [pendingProfessorName, setPendingProfessorName] = useState<string | null>(null);
   const [mondayDate, setMondayDate] = useState<string>(() => {
     const today = new Date();
     const day = today.getDay();
@@ -224,7 +265,7 @@ export default function App() {
     if (!name.trim()) return;
 
     if (type === 'professors') {
-      const newProfessor: Professor = { id: professorIdCounter++, name };
+      const newProfessor: Professor = { id: professorIdCounter++, name, color: extra?.color ?? COLOR_PALETTE[0] };
       setProfessors(prev => [...prev, newProfessor]);
     }
 
@@ -243,6 +284,17 @@ export default function App() {
       const newClassroom: Classroom = { id: classroomIdCounter++, name };
       setClassrooms(prev => [...prev, newClassroom]);
     }
+  };
+
+  const requestAddProfessor = (name: string) => {
+    if (!name.trim()) return;
+    setPendingProfessorName(name.trim());
+  };
+
+  const finalizeAddProfessor = (color: string) => {
+    if (!pendingProfessorName) return;
+    addEntity('professors', pendingProfessorName, { color });
+    setPendingProfessorName(null);
   };
 
   const removeEntity = (type: 'professors' | 'subjects' | 'classrooms', id: number) => {
@@ -430,7 +482,7 @@ export default function App() {
                   subject_id: sub.id,
                   professor_id: profId || null,
                   classroom_id: room?.id || null,
-                  exception_flag: 0
+                  exception_flag: false
                 };
                 newEntries.push(entry);
                 if (profId) profSchedule[profKey] = true;
@@ -649,7 +701,7 @@ export default function App() {
                 onRemove={(id) => removeEntity('subjects', id)}
                 onUpdate={(type, id, data) => updateEntity(type as any, id, data)}
                 professors={professors}
-                onAddProfessor={(name) => addEntity('professors', name)}
+                onRequestAddProfessor={requestAddProfessor}
                 classes={classes}
               />
               <div className="border-t border-border-blue-gray my-8" />
@@ -738,7 +790,7 @@ export default function App() {
                       placeholder="Add new professor name..."
                       onKeyDown={async (e) => {
                         if (e.key === 'Enter' && e.currentTarget.value) {
-                          await addEntity('professors', e.currentTarget.value);
+                          requestAddProfessor(e.currentTarget.value);
                           e.currentTarget.value = '';
                         }
                       }}
@@ -749,7 +801,14 @@ export default function App() {
                 <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
                   {professors.map(prof => (
                     <div key={prof.id} className="flex items-center justify-between p-3 bg-deep-navy border border-border-blue-gray rounded-md group">
-                      <span className="text-sm font-medium">{prof.name}</span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full border border-border-blue-gray shrink-0"
+                          style={{ backgroundColor: prof.color }}
+                          aria-hidden="true"
+                        />
+                        <span className="text-sm font-medium truncate">{prof.name}</span>
+                      </div>
                       <button 
                         onClick={() => removeEntity('professors', prof.id)}
                         className="p-1.5 text-muted-steel hover:text-red-400 hover:bg-slate-blue rounded transition-all opacity-0 group-hover:opacity-100"
@@ -777,6 +836,49 @@ export default function App() {
             </div>
           )}
         </AnimatePresence>
+
+        {/* Color Picker (Professor) */}
+        <AnimatePresence>
+          {pendingProfessorName && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-deep-navy/80 backdrop-blur-sm">
+              <motion.div
+                initial={{ scale: 0.98, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.98, opacity: 0 }}
+                className="bg-midnight-blue rounded-lg shadow-none border border-border-blue-gray w-full max-w-md p-6"
+              >
+                <div className="mb-4">
+                  <div className="text-muted-teal text-sm font-semibold">Pick a color</div>
+                  <div className="text-xs text-muted-steel mt-1 truncate">
+                    Professor: <span className="text-white font-medium">{pendingProfessorName}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-5 gap-3 mb-6">
+                  {COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => finalizeAddProfessor(c)}
+                      className="h-10 rounded-md border border-border-blue-gray hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-muted-teal"
+                      style={{ backgroundColor: c }}
+                      aria-label={`Select color ${c}`}
+                      title={c}
+                    />
+                  ))}
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPendingProfessorName(null)}
+                    className="flex-1 btn-outline"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
     </DndContext>
   );
@@ -795,7 +897,7 @@ const DroppableCellWrapper = ({ id, children }: { id: string, children: React.Re
   );
 };
 
-const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, professors, onAddProfessor, classes }: { 
+const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, professors, onRequestAddProfessor, classes }: { 
   title: string, 
   items: any[], 
   type: string, 
@@ -803,7 +905,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
   onRemove: (id: number) => void,
   onUpdate?: (type: string, id: number, data: any) => void,
   professors?: Professor[],
-  onAddProfessor?: (name: string) => void,
+  onRequestAddProfessor?: (name: string) => void,
   classes?: ClassWithBatches[]
 }) => {
   const [step, setStep] = useState<'none' | 'subject' | 'professor' | 'classes_taught' | 'weightage' | 'generic'>('none');
@@ -812,7 +914,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
 
   const handleAdd = () => {
     onAdd(formData.name, { 
-      professor_id: parseInt(formData.professorId), 
+      professor_id: formData.professorId ? parseInt(formData.professorId) : undefined, 
       weightage: formData.weightage,
       allowed_class_ids: formData.allowedClassIds
     });
@@ -886,8 +988,8 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
                 />
                 <button 
                   onClick={() => {
-                    if (newProfName && onAddProfessor) {
-                      onAddProfessor(newProfName);
+                    if (newProfName && onRequestAddProfessor) {
+                      onRequestAddProfessor(newProfName);
                       setNewProfName('');
                     }
                   }}

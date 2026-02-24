@@ -31,6 +31,7 @@ export interface ClassWithBatches {
 export interface Professor {
   id: number;
   name: string;
+  color: string;
 }
 
 export interface Subject {

@@ -170,6 +170,10 @@ const DroppableCell = ({
   const professor = professors.find(p => p.id === entry?.professor_id);
   const classroom = classrooms.find(c => c.id === entry?.classroom_id);
   const professorColor = professor?.color;
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `entry:${day}:${slotIdx}:${classId}:${batchId}`,
+    disabled: !entry,
+  });
 
   return (
     <div className="h-24 border-b border-border-blue-gray last:border-b-0 px-1.5 py-1.5 overflow-hidden">
@@ -180,12 +184,16 @@ const DroppableCell = ({
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="w-full h-full"
+            className={cn("w-full h-full", isDragging && "opacity-40")}
+            ref={setNodeRef}
+            {...attributes}
+            {...listeners}
           >
             <div
               className={cn(
-                "w-full h-full rounded-md overflow-hidden relative group border border-border-blue-gray px-3 py-2 bg-midnight-blue/90 flex flex-col justify-center",
-                professorColor && "border-l-4"
+                "w-full h-full rounded-md overflow-hidden relative group border border-border-blue-gray px-3 py-2 bg-midnight-blue/90 flex flex-col justify-center cursor-grab active:cursor-grabbing",
+                professorColor && "border-l-4",
+                // Slight transparency when dragging will be applied via parent using dnd-kit
               )}
               style={{
                 ...(professorColor
@@ -323,7 +331,28 @@ export default function App() {
   const onDragStart = (event: DragStartEvent) => {
     if (!user) return;
     const { active } = event;
-    const [type, id] = (active.id as string).split(':');
+    const [type, ...rest] = (active.id as string).split(':');
+
+    if (type === 'entry') {
+      const [dayStr, slotStr, classStr, batchStr] = rest;
+      const origin = timetable.find(t =>
+        t.day === parseInt(dayStr) &&
+        t.time_slot === parseInt(slotStr) &&
+        t.class_id === parseInt(classStr) &&
+        t.batch_id === parseInt(batchStr)
+      );
+      if (origin) {
+        const subj = subjects.find(s => s.id === origin.subject_id);
+        setActiveDrag({
+          id: active.id as string,
+          type,
+          data: { name: subj?.name ?? '' },
+        });
+      }
+      return;
+    }
+
+    const id = rest[0];
     let data;
     if (type === 'professor') data = professors.find(p => p.id === parseInt(id));
     if (type === 'subject') data = subjects.find(s => s.id === parseInt(id));
@@ -336,10 +365,37 @@ export default function App() {
     setActiveDrag(null);
     if (!over || !user) return;
 
-    const [type, entityId] = (active.id as string).split(':');
+    const [type, ...rest] = (active.id as string).split(':');
     const [targetType, day, slot, classId, batchId] = (over.id as string).split(':');
 
     if (targetType === 'cell') {
+      if (type === 'entry') {
+        const [srcDay, srcSlot, srcClass, srcBatch] = rest;
+        const origin = timetable.find(t =>
+          t.day === parseInt(srcDay) &&
+          t.time_slot === parseInt(srcSlot) &&
+          t.class_id === parseInt(srcClass) &&
+          t.batch_id === parseInt(srcBatch)
+        );
+        if (!origin) return;
+
+        const update = {
+          day: parseInt(day),
+          time_slot: parseInt(slot),
+          class_id: parseInt(classId),
+          batch_id: parseInt(batchId),
+          subject_id: origin.subject_id,
+          professor_id: origin.professor_id,
+          classroom_id: origin.classroom_id,
+          exception_flag: origin.exception_flag,
+        };
+
+        saveEntry(update);
+        clearCell(origin.day, origin.time_slot, origin.class_id, origin.batch_id);
+        return;
+      }
+
+      const entityId = rest[0];
       const entry = timetable.find(t => 
         t.day === parseInt(day) && 
         t.time_slot === parseInt(slot) && 

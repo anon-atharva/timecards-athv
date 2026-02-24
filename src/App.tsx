@@ -172,18 +172,19 @@ const DroppableCell = ({
   const professorColor = professor?.color;
 
   return (
-    <div className={cn(
-      "h-16 border-b border-border-blue-gray last:border-b-0 flex items-center px-3 gap-2 overflow-hidden relative group border-l border-l-border-blue-gray",
-      professorColor && "border-l-4"
-    )}
-    style={{
-      ...(professorColor
-        ? {
-            borderLeftColor: professorColor,
-            backgroundColor: hexToRgba(professorColor, entry?.exception_flag ? 0.16 : 0.10),
-          }
-        : {}),
-    }}
+    <div
+      className={cn(
+        "h-20 border-b border-border-blue-gray last:border-b-0 px-2 py-1.5 overflow-hidden relative group border-l border-l-border-blue-gray",
+        professorColor && "border-l-4"
+      )}
+      style={{
+        ...(professorColor
+          ? {
+              borderLeftColor: professorColor,
+              backgroundColor: hexToRgba(professorColor, entry?.exception_flag ? 0.16 : 0.10),
+            }
+          : {}),
+      }}
     >
       <AnimatePresence mode="popLayout">
         {entry && (
@@ -192,12 +193,17 @@ const DroppableCell = ({
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
-            className="flex items-center gap-2 w-full h-full"
+            className="w-full h-full"
           >
-            <div className="flex flex-col leading-snug flex-1 truncate">
-              <span className="font-bold text-sm truncate text-muted-teal">{subject?.name || '---'}</span>
-              <span className="text-xs text-muted-steel truncate font-medium">
-                {professor?.name || '---'} <span className="opacity-40 mx-1">•</span> {classroom?.name || '---'}
+            <div className="flex flex-col leading-snug pr-5">
+              <span className="font-semibold text-[13px] text-muted-teal truncate">
+                {subject?.name || '---'}
+              </span>
+              <span className="text-[11px] text-slate-100 truncate">
+                {professor?.name || '—'}
+              </span>
+              <span className="text-[11px] text-muted-steel truncate">
+                {classroom?.name || '—'}
               </span>
             </div>
             <button 
@@ -206,7 +212,7 @@ const DroppableCell = ({
                 onClear();
               }}
               onPointerDown={(e) => e.stopPropagation()}
-              className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-blue rounded absolute right-1 bg-midnight-blue border border-border-blue-gray shadow-none z-10"
+              className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-blue rounded absolute right-1 top-1 bg-midnight-blue border border-border-blue-gray shadow-none z-10"
             >
               <X className="w-3 h-3" />
             </button>

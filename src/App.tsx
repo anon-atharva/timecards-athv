@@ -8,7 +8,7 @@ import {
   DragStartEvent, 
   DragEndEvent 
 } from '@dnd-kit/core';
-import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2 } from 'lucide-react';
+import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2, ChevronRight, ChevronLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './utils';
 import { 
@@ -240,6 +240,7 @@ export default function App() {
   const [pendingProfessorName, setPendingProfessorName] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [hasLoadedSavedStacks, setHasLoadedSavedStacks] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [mondayDate, setMondayDate] = useState<string>(() => {
     const today = new Date();
     const day = today.getDay();
@@ -255,6 +256,9 @@ export default function App() {
   };
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const exportPdf = () => {
+    window.print();
+  };
 
   const LOCAL_STACKS_KEY = 'timecards.stacks.local.v1';
 
@@ -685,7 +689,7 @@ export default function App() {
 
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-      <div className="min-h-screen flex flex-col">
+      <div className="min-h-screen flex flex-col no-print">
         {/* Top Bar */}
         <header className="h-16 bg-midnight-blue border-b border-border-blue-gray px-6 flex items-center justify-between sticky top-0 z-30">
           <div className="flex items-center gap-8">
@@ -774,7 +778,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex-1 flex overflow-hidden">
+        <main className="flex-1 flex overflow-hidden relative">
           {/* Timetable Grid */}
           <div className="flex-1 overflow-auto p-8 bg-deep-navy">
             <div className="max-w-7xl mx-auto">
@@ -859,74 +863,102 @@ export default function App() {
           </div>
 
           {/* Sidebar */}
-          <aside className="w-80 border-l border-border-blue-gray bg-midnight-blue p-6 overflow-y-auto flex flex-col">
-            <div className="mb-8 pb-8 border-b border-border-blue-gray space-y-3">
-              <button 
-                onClick={autoCreate}
-                className="w-full btn-teal py-4 flex items-center justify-center gap-2 shadow-none"
+          <AnimatePresence initial={false}>
+            {!isSidebarCollapsed && (
+              <motion.aside
+                initial={{ x: 0 }}
+                animate={{ x: 0 }}
+                exit={{ x: '100%' }}
+                transition={{ duration: 0.2 }}
+                className="w-80 border-l border-border-blue-gray bg-midnight-blue p-6 overflow-y-auto flex flex-col"
               >
-                AUTO-CREATE TIMETABLE
-              </button>
-              <p className="text-[10px] text-muted-steel mt-2 text-center uppercase tracking-widest">
-                Based on subject weightage
-              </p>
-            </div>
+                <div className="mb-8 pb-8 border-b border-border-blue-gray space-y-3">
+                  <button 
+                    onClick={autoCreate}
+                    className="w-full btn-teal py-4 flex items-center justify-center gap-2 shadow-none"
+                  >
+                    AUTO-CREATE TIMETABLE
+                  </button>
+                  <button
+                    onClick={exportPdf}
+                    className="w-full btn-outline py-2 text-xs mt-3"
+                  >
+                    EXPORT AS PDF
+                  </button>
+                </div>
 
-            <div className="flex-1">
-              <SidebarSection 
-                title="Subjects & Professors" 
-                items={subjects} 
-                type="subject" 
-                onAdd={(name, extra) => addEntity('subjects', name, extra)}
-                onRemove={(id) => removeEntity('subjects', id)}
-                onUpdate={(type, id, data) => updateEntity(type as any, id, data)}
-                professors={professors}
-                onRequestAddProfessor={requestAddProfessor}
-                classes={classes}
-              />
-              <div className="border-t border-border-blue-gray my-8" />
-              <SidebarSection 
-                title="Classrooms" 
-                items={classrooms} 
-                type="classroom" 
-                onAdd={(name) => addEntity('classrooms', name)}
-                onRemove={(id) => removeEntity('classrooms', id)}
-              />
-              <div className="pt-4 space-y-2">
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept="application/json,.json"
-                  className="hidden"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    try {
-                      const text = await file.text();
-                      importStacksFromText(text);
-                    } finally {
-                      e.currentTarget.value = '';
-                    }
-                  }}
-                />
-                <button
-                  onClick={exportStacksToFile}
-                  className="w-full btn-outline py-2 text-xs"
-                >
-                  SAVE STACKS (EXPORT)
-                </button>
-                <button
-                  onClick={() => importInputRef.current?.click()}
-                  className="w-full btn-outline py-2 text-xs"
-                >
-                  IMPORT STACKS
-                </button>
-                <p className="text-[10px] text-muted-steel text-center uppercase tracking-widest">
-                  Saves Subjects, Professors, Classrooms
-                </p>
-              </div>
-            </div>
-          </aside>
+                <div className="flex-1">
+                  <SidebarSection 
+                    title="Subjects & Professors" 
+                    items={subjects} 
+                    type="subject" 
+                    onAdd={(name, extra) => addEntity('subjects', name, extra)}
+                    onRemove={(id) => removeEntity('subjects', id)}
+                    onUpdate={(type, id, data) => updateEntity(type as any, id, data)}
+                    professors={professors}
+                    onRequestAddProfessor={requestAddProfessor}
+                    classes={classes}
+                  />
+                  <div className="border-t border-border-blue-gray my-8" />
+                  <SidebarSection 
+                    title="Classrooms" 
+                    items={classrooms} 
+                    type="classroom" 
+                    onAdd={(name) => addEntity('classrooms', name)}
+                    onRemove={(id) => removeEntity('classrooms', id)}
+                  />
+                  <div className="border-t border-border-blue-gray my-4" />
+                  <div className="pt-4 space-y-2">
+                    <input
+                      ref={importInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          const text = await file.text();
+                          importStacksFromText(text);
+                        } finally {
+                          e.currentTarget.value = '';
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={exportStacksToFile}
+                      className="w-full btn-outline py-2 text-xs"
+                    >
+                      SAVE STACKS (EXPORT)
+                    </button>
+                    <button
+                      onClick={() => importInputRef.current?.click()}
+                      className="w-full btn-outline py-2 text-xs"
+                    >
+                      IMPORT STACKS
+                    </button>
+                    <p className="text-[10px] text-muted-steel text-center uppercase tracking-widest">
+                      Saves Subjects, Professors, Classrooms
+                    </p>
+                  </div>
+                </div>
+              </motion.aside>
+            )}
+          </AnimatePresence>
+
+          {/* Sidebar toggle handle */}
+          <button
+            type="button"
+            onClick={() => setIsSidebarCollapsed((v) => !v)}
+            className="absolute top-6 right-0 z-20 translate-x-1/2 bg-midnight-blue border border-border-blue-gray rounded-full w-7 h-7 flex items-center justify-center hover:bg-slate-blue transition-colors"
+            aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {isSidebarCollapsed ? (
+              <ChevronLeft className="w-4 h-4 text-muted-steel" />
+            ) : (
+              <ChevronRight className="w-4 h-4 text-muted-steel" />
+            )}
+          </button>
         </main>
 
         {/* Conflict Modal */}

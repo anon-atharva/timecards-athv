@@ -185,7 +185,7 @@ const DroppableCell = ({
     : undefined;
 
   return (
-    <div className="h-16 border-b border-border-blue-gray last:border-b-0 px-1 py-1">
+    <div className="h-20 border-b border-border-blue-gray last:border-b-0 px-1 py-1">
       <AnimatePresence mode="popLayout">
         {hasEntry && (
           <motion.div 
@@ -203,8 +203,8 @@ const DroppableCell = ({
             style={cardStyle}
           >
             <div className="flex flex-col leading-snug flex-1 truncate">
-              <span className="font-bold text-base truncate text-muted-teal">{subject?.name || '---'}</span>
-              <span className="text-sm text-muted-steel truncate font-medium">
+              <span className="font-bold text-sm truncate text-muted-teal">{subject?.name || '---'}</span>
+              <span className="text-xs text-muted-steel truncate font-medium">
                 {professor?.name || '---'} <span className="opacity-40 mx-1">•</span> {classroom?.name || '---'}
               </span>
             </div>

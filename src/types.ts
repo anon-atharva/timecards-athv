@@ -38,6 +38,7 @@ export interface Subject {
   id: number;
   name: string;
   weightage: number;
+  mode?: 'lecture' | 'lab';
   professor_id?: number;
   allowed_class_ids?: number[];
 }

@@ -171,12 +171,13 @@ const DroppableCell = ({
   const classroom = classrooms.find(c => c.id === entry?.classroom_id);
   const professorColor = professor?.color;
   const hasEntry = !!entry;
+  const draggableId = `cellEntry:${day}:${slotIdx}:${classId}:${batchId}`;
+
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: draggableId });
 
   const cardStyle = hasEntry
     ? {
-        backgroundColor: professorColor
-          ? hexToRgba(professorColor, entry?.exception_flag ? 0.24 : 0.18)
-          : hexToRgba('#020617', 0.9),
+        backgroundColor: professorColor || '#020617',
         ...(professorColor
           ? { borderLeft: `3px solid ${professorColor}` }
           : {}),
@@ -192,12 +193,18 @@ const DroppableCell = ({
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
-            className="relative flex items-center gap-2 w-full h-full rounded-md px-3 overflow-hidden group shadow-sm"
+            ref={setNodeRef}
+            {...attributes}
+            {...listeners}
+            className={cn(
+              "relative flex items-center gap-2 w-full h-full rounded-md px-3 overflow-hidden group shadow-sm cursor-move",
+              isDragging && "opacity-40"
+            )}
             style={cardStyle}
           >
             <div className="flex flex-col leading-snug flex-1 truncate">
-              <span className="font-bold text-sm truncate text-muted-teal">{subject?.name || '---'}</span>
-              <span className="text-xs text-muted-steel truncate font-medium">
+              <span className="font-bold text-base truncate text-muted-teal">{subject?.name || '---'}</span>
+              <span className="text-sm text-muted-steel truncate font-medium">
                 {professor?.name || '---'} <span className="opacity-40 mx-1">•</span> {classroom?.name || '---'}
               </span>
             </div>
@@ -459,6 +466,7 @@ export default function App() {
         id: subjectIdCounter++,
         name,
         weightage: extra?.weightage ?? 1,
+        mode: extra?.mode ?? 'lecture',
         professor_id: extra?.professor_id,
         allowed_class_ids: extra?.allowed_class_ids ?? [],
       };
@@ -492,11 +500,27 @@ export default function App() {
   const onDragStart = (event: DragStartEvent) => {
     if (!user) return;
     const { active } = event;
-    const [type, id] = (active.id as string).split(':');
-    let data;
-    if (type === 'professor') data = professors.find(p => p.id === parseInt(id));
-    if (type === 'subject') data = subjects.find(s => s.id === parseInt(id));
-    if (type === 'classroom') data = classrooms.find(c => c.id === parseInt(id));
+    const [type, ...rest] = (active.id as string).split(':');
+    let data: any = null;
+
+    if (type === 'professor') data = professors.find(p => p.id === parseInt(rest[0]!));
+    if (type === 'subject') data = subjects.find(s => s.id === parseInt(rest[0]!));
+    if (type === 'classroom') data = classrooms.find(c => c.id === parseInt(rest[0]!));
+
+    if (type === 'cellEntry') {
+      const [day, slot, classId, batchId] = rest.map(v => parseInt(v));
+      const entry = timetable.find(t =>
+        t.day === day &&
+        t.time_slot === slot &&
+        t.class_id === classId &&
+        t.batch_id === batchId
+      );
+      if (entry) {
+        const subject = subjects.find(s => s.id === entry.subject_id);
+        data = { name: subject?.name ?? '---' };
+      }
+    }
+
     setActiveDrag({ id: active.id as string, type, data });
   };
 
@@ -505,8 +529,30 @@ export default function App() {
     setActiveDrag(null);
     if (!over || !user) return;
 
-    const [type, entityId] = (active.id as string).split(':');
+    const [type, ...activeParts] = (active.id as string).split(':');
     const [targetType, day, slot, classId, batchId] = (over.id as string).split(':');
+
+    if (type === 'cellEntry' && targetType === 'cell') {
+      const [fromDay, fromSlot, fromClassId, fromBatchId] = activeParts.map(v => parseInt(v));
+      const entry = timetable.find(t =>
+        t.day === fromDay &&
+        t.time_slot === fromSlot &&
+        t.class_id === fromClassId &&
+        t.batch_id === fromBatchId
+      );
+      if (entry) {
+        moveEntry(
+          entry.id,
+          parseInt(day),
+          parseInt(slot),
+          parseInt(classId),
+          parseInt(batchId)
+        );
+      }
+      return;
+    }
+
+    const entityId = activeParts[0]!;
 
     if (targetType === 'cell') {
       const entry = timetable.find(t => 
@@ -608,6 +654,45 @@ export default function App() {
     }
   };
 
+  const moveEntry = (entryId: number, day: number, slot: number, classId: number, batchId: number) => {
+    const existing = timetable.find(t => t.id === entryId);
+    if (!existing) return;
+
+    const updated: TimetableEntry = {
+      ...existing,
+      day,
+      time_slot: slot,
+      class_id: classId,
+      batch_id: batchId,
+    };
+
+    if (updated.professor_id && !updated.exception_flag) {
+      const conflicting = timetable.find(t =>
+        t.id !== updated.id &&
+        t.day === updated.day &&
+        t.time_slot === updated.time_slot &&
+        t.professor_id === updated.professor_id &&
+        t.class_id !== updated.class_id
+      );
+
+      if (conflicting) {
+        const conflictClass =
+          allClasses.find(c => c.id === conflicting.class_id) ||
+          classes.find(c => c.id === conflicting.class_id);
+
+        setConflict({
+          message: `Conflict detected: Professor is already assigned to ${conflictClass?.name ?? 'another class'} at this time.`,
+          data: updated,
+        });
+        return;
+      }
+    }
+
+    setTimetable(prev =>
+      prev.map(t => (t.id === entryId ? updated : t))
+    );
+  };
+
   const autoCreate = () => {
     if (!user) return;
     if (subjects.length === 0) {
@@ -621,36 +706,37 @@ export default function App() {
 
     // For each class and its batches
     for (const cls of classes) {
-      for (const batch of cls.batches) {
-        let availableSlots: { day: number, slot: number }[] = [];
-        for (let d = 0; d < 5; d++) {
-          for (let s = 0; s < 8; s++) {
-            availableSlots.push({ day: d, slot: s });
-          }
+      // Precompute all slots for this class
+      let classSlots: { day: number, slot: number }[] = [];
+      for (let d = 0; d < 5; d++) {
+        for (let s = 0; s < 8; s++) {
+          classSlots.push({ day: d, slot: s });
         }
-        // Shuffle slots
-        availableSlots.sort(() => Math.random() - 0.5);
+      }
+      classSlots.sort(() => Math.random() - 0.5);
 
-        for (const sub of subjects) {
-          // Respect allowed classes
-          if (sub.allowed_class_ids && sub.allowed_class_ids.length > 0 && !sub.allowed_class_ids.includes(cls.id)) {
-            continue;
-          }
+      for (const sub of subjects) {
+        // Respect allowed classes
+        if (sub.allowed_class_ids && sub.allowed_class_ids.length > 0 && !sub.allowed_class_ids.includes(cls.id)) {
+          continue;
+        }
 
-          // Respect weightage
+        const mode = sub.mode ?? 'lecture';
+
+        if (mode === 'lecture') {
+          // Allocate hours at class level: all batches share the same slot
           for (let h = 0; h < sub.weightage; h++) {
-            if (availableSlots.length === 0) break;
+            if (classSlots.length === 0) break;
 
             let found = false;
             let attempts = 0;
 
-            while (!found && attempts < availableSlots.length) {
-              const { day, slot } = availableSlots[0]; // Always try the first available slot
-              
-              // Use assigned professor if available, otherwise pick random
+            while (!found && attempts < classSlots.length) {
+              const { day, slot } = classSlots[0];
+
               const profId = sub.professor_id || (professors[Math.floor(Math.random() * professors.length)]?.id);
               const room = classrooms[Math.floor(Math.random() * classrooms.length)];
-              
+
               const profKey = `${day}:${slot}:${profId}`;
               const roomKey = `${day}:${slot}:${room?.id}`;
 
@@ -658,26 +744,71 @@ export default function App() {
               const roomBusy = room && roomSchedule[roomKey];
 
               if (!profBusy && !roomBusy) {
-                const entry: TimetableEntry = {
-                  id: timetableEntryIdCounter++,
-                  day,
-                  time_slot: slot,
-                  class_id: cls.id,
-                  batch_id: batch.id,
-                  subject_id: sub.id,
-                  professor_id: profId || null,
-                  classroom_id: room?.id || null,
-                  exception_flag: false
-                };
-                newEntries.push(entry);
+                for (const batch of cls.batches) {
+                  newEntries.push({
+                    id: timetableEntryIdCounter++,
+                    day,
+                    time_slot: slot,
+                    class_id: cls.id,
+                    batch_id: batch.id,
+                    subject_id: sub.id,
+                    professor_id: profId || null,
+                    classroom_id: room?.id || null,
+                    exception_flag: false,
+                  });
+                }
                 if (profId) profSchedule[profKey] = true;
                 if (room) roomSchedule[roomKey] = true;
                 found = true;
-                availableSlots.shift(); // Remove this slot from available for THIS batch
+                classSlots.shift();
               } else {
-                // Move the slot to the end and try the next one
-                availableSlots.push(availableSlots.shift()!);
+                classSlots.push(classSlots.shift()!);
                 attempts++;
+              }
+            }
+          }
+        } else {
+          // Lab: allocate hours batch-wise
+          for (const batch of cls.batches) {
+            let availableSlots = [...classSlots];
+            for (let h = 0; h < sub.weightage; h++) {
+              if (availableSlots.length === 0) break;
+
+              let found = false;
+              let attempts = 0;
+
+              while (!found && attempts < availableSlots.length) {
+                const { day, slot } = availableSlots[0];
+
+                const profId = sub.professor_id || (professors[Math.floor(Math.random() * professors.length)]?.id);
+                const room = classrooms[Math.floor(Math.random() * classrooms.length)];
+
+                const profKey = `${day}:${slot}:${profId}`;
+                const roomKey = `${day}:${slot}:${room?.id}`;
+
+                const profBusy = profId && profSchedule[profKey];
+                const roomBusy = room && roomSchedule[roomKey];
+
+                if (!profBusy && !roomBusy) {
+                  newEntries.push({
+                    id: timetableEntryIdCounter++,
+                    day,
+                    time_slot: slot,
+                    class_id: cls.id,
+                    batch_id: batch.id,
+                    subject_id: sub.id,
+                    professor_id: profId || null,
+                    classroom_id: room?.id || null,
+                    exception_flag: false,
+                  });
+                  if (profId) profSchedule[profKey] = true;
+                  if (room) roomSchedule[roomKey] = true;
+                  found = true;
+                  availableSlots.shift();
+                } else {
+                  availableSlots.push(availableSlots.shift()!);
+                  attempts++;
+                }
               }
             }
           }
@@ -1154,18 +1285,19 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
   onRequestAddProfessor?: (name: string) => void,
   classes?: ClassWithBatches[]
 }) => {
-  const [step, setStep] = useState<'none' | 'subject' | 'professor' | 'classes_taught' | 'weightage' | 'generic'>('none');
-  const [formData, setFormData] = useState({ name: '', professorId: '', weightage: 2, allowedClassIds: [] as number[] });
+  const [step, setStep] = useState<'none' | 'subject' | 'mode' | 'professor' | 'classes_taught' | 'weightage' | 'generic'>('none');
+  const [formData, setFormData] = useState({ name: '', professorId: '', weightage: 2, allowedClassIds: [] as number[], mode: 'lecture' as 'lecture' | 'lab' });
   const [newProfName, setNewProfName] = useState('');
 
   const handleAdd = () => {
     onAdd(formData.name, { 
       professor_id: formData.professorId ? parseInt(formData.professorId) : undefined, 
       weightage: formData.weightage,
-      allowed_class_ids: formData.allowedClassIds
+      allowed_class_ids: formData.allowedClassIds,
+      mode: formData.mode,
     });
     setStep('none');
-    setFormData({ name: '', professorId: '', weightage: 2, allowedClassIds: [] });
+    setFormData({ name: '', professorId: '', weightage: 2, allowedClassIds: [], mode: 'lecture' });
   };
 
   return (
@@ -1202,15 +1334,56 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
                 placeholder="e.g. Mathematics"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                onKeyDown={(e) => e.key === 'Enter' && formData.name && setStep('professor')}
+                onKeyDown={(e) => e.key === 'Enter' && formData.name && setStep('mode')}
               />
               <button 
                 disabled={!formData.name}
-                onClick={() => setStep('professor')}
+                onClick={() => setStep('mode')}
                 className="w-full mt-2 btn-teal py-1 text-xs"
               >
-                Next: Select Professor
+                Next: Type (Lecture/Lab)
               </button>
+            </div>
+          )}
+
+          {step === 'mode' && (
+            <div>
+              <label className="block text-[10px] font-bold uppercase mb-1 text-muted-steel">Type</label>
+              <div className="flex gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, mode: 'lecture' })}
+                  className={cn(
+                    "flex-1 py-1 text-xs rounded border",
+                    formData.mode === 'lecture'
+                      ? "border-muted-teal bg-slate-blue text-white"
+                      : "border-border-blue-gray bg-midnight-blue text-muted-steel"
+                  )}
+                >
+                  Lecture
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, mode: 'lab' })}
+                  className={cn(
+                    "flex-1 py-1 text-xs rounded border",
+                    formData.mode === 'lab'
+                      ? "border-muted-teal bg-slate-blue text-white"
+                      : "border-border-blue-gray bg-midnight-blue text-muted-steel"
+                  )}
+                >
+                  Lab
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setStep('subject')} className="flex-1 btn-outline py-1 text-xs">Back</button>
+                <button 
+                  onClick={() => setStep('professor')}
+                  className="flex-1 btn-teal py-1 text-xs"
+                >
+                  Next: Select Professor
+                </button>
+              </div>
             </div>
           )}
 

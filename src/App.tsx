@@ -913,7 +913,7 @@ export default function App() {
         <main className="flex-1 flex overflow-hidden relative">
           {/* Timetable Grid */}
           <div className="flex-1 overflow-auto p-8 bg-deep-navy">
-            <div className="max-w-7xl mx-auto">
+              <div className={cn("mx-auto", !isSidebarCollapsed && "max-w-7xl")}>
               {/* Day Tabs */}
               <div className="flex gap-1 mb-8">
                 {DAYS.map((day, idx) => (
@@ -1231,17 +1231,14 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-5 gap-3 mb-6">
-                  {COLOR_PALETTE.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => finalizeAddProfessor(c)}
-                      className="h-10 rounded-md border border-border-blue-gray hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-muted-teal"
-                      style={{ backgroundColor: c }}
-                      aria-label={`Select color ${c}`}
-                      title={c}
-                    />
-                  ))}
+                <div className="mb-6 flex items-center justify-center">
+                  <input
+                    type="color"
+                    defaultValue={COLOR_PALETTE[0]}
+                    onChange={(e) => finalizeAddProfessor(e.target.value)}
+                    className="w-24 h-24 bg-transparent border border-border-blue-gray rounded-full cursor-pointer"
+                    aria-label="Pick professor color"
+                  />
                 </div>
 
                 <div className="flex gap-2">

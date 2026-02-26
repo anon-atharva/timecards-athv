@@ -714,9 +714,9 @@ export default function App() {
         }
       }
 
-      // Max 2 lecture hours per class per day
-      const lectureHoursPerClassDay: Record<string, number> = {};
-      const lectureDayKey = (day: number) => `${cls.id}:${day}`;
+      // Max 2 hours per subject per day (per class for lectures, per batch for labs); other subjects can use remaining slots
+      const lectureHoursPerSubjectPerDay: Record<string, number> = {};
+      const lectureKey = (subId: number, day: number) => `${cls.id}:${subId}:${day}`;
 
       for (const sub of subjects) {
         // Respect allowed classes
@@ -727,7 +727,7 @@ export default function App() {
         const mode = sub.mode ?? 'lecture';
 
         if (mode === 'lecture') {
-          // Allocate hours at class level: all batches share the same slot; max 2 hours per class per day
+          // Allocate hours at class level; max 2 hours per subject per class per day
           for (let h = 0; h < sub.weightage; h++) {
             if (classSlots.length === 0) break;
 
@@ -737,8 +737,8 @@ export default function App() {
             while (!found && attempts < classSlots.length) {
               const { day, slot } = classSlots[0];
 
-              const lectureCount = lectureHoursPerClassDay[lectureDayKey(day)] ?? 0;
-              if (lectureCount >= MAX_HOURS_PER_DAY) {
+              const subjectDayCount = lectureHoursPerSubjectPerDay[lectureKey(sub.id, day)] ?? 0;
+              if (subjectDayCount >= MAX_HOURS_PER_DAY) {
                 classSlots.push(classSlots.shift()!);
                 attempts++;
                 continue;
@@ -767,7 +767,7 @@ export default function App() {
                     exception_flag: false,
                   });
                 }
-                lectureHoursPerClassDay[lectureDayKey(day)] = lectureCount + 1;
+                lectureHoursPerSubjectPerDay[lectureKey(sub.id, day)] = subjectDayCount + 1;
                 if (profId) profSchedule[profKey] = true;
                 if (room) roomSchedule[roomKey] = true;
                 found = true;
@@ -779,9 +779,9 @@ export default function App() {
             }
           }
         } else {
-          // Lab: allocate hours batch-wise; max 2 hours per batch per day
-          const labHoursPerBatchDay: Record<string, number> = {};
-          const labDayKey = (batchId: number, day: number) => `${cls.id}:${batchId}:${day}`;
+          // Lab: allocate hours batch-wise; max 2 hours per subject per batch per day
+          const labHoursPerSubjectPerDay: Record<string, number> = {};
+          const labKey = (batchId: number, day: number) => `${cls.id}:${batchId}:${sub.id}:${day}`;
 
           for (const batch of cls.batches) {
             let availableSlots = [...classSlots];
@@ -794,8 +794,8 @@ export default function App() {
               while (!found && attempts < availableSlots.length) {
                 const { day, slot } = availableSlots[0];
 
-                const labCount = labHoursPerBatchDay[labDayKey(batch.id, day)] ?? 0;
-                if (labCount >= MAX_HOURS_PER_DAY) {
+                const subjectDayCount = labHoursPerSubjectPerDay[labKey(batch.id, day)] ?? 0;
+                if (subjectDayCount >= MAX_HOURS_PER_DAY) {
                   availableSlots.push(availableSlots.shift()!);
                   attempts++;
                   continue;
@@ -822,7 +822,7 @@ export default function App() {
                     classroom_id: room?.id || null,
                     exception_flag: false,
                   });
-                  labHoursPerBatchDay[labDayKey(batch.id, day)] = labCount + 1;
+                  labHoursPerSubjectPerDay[labKey(batch.id, day)] = subjectDayCount + 1;
                   if (profId) profSchedule[profKey] = true;
                   if (room) roomSchedule[roomKey] = true;
                   found = true;

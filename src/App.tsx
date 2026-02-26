@@ -246,6 +246,7 @@ export default function App() {
   const [conflict, setConflict] = useState<{ message: string, data: any } | null>(null);
   const [isProfessorModalOpen, setIsProfessorModalOpen] = useState(false);
   const [pendingProfessorName, setPendingProfessorName] = useState<string | null>(null);
+  const [pendingProfessorColor, setPendingProfessorColor] = useState<string>(COLOR_PALETTE[0]);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [hasLoadedSavedStacks, setHasLoadedSavedStacks] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -482,12 +483,14 @@ export default function App() {
   const requestAddProfessor = (name: string) => {
     if (!name.trim()) return;
     setPendingProfessorName(name.trim());
+    setPendingProfessorColor(COLOR_PALETTE[0]);
   };
 
   const finalizeAddProfessor = (color: string) => {
     if (!pendingProfessorName) return;
     addEntity('professors', pendingProfessorName, { color });
     setPendingProfessorName(null);
+    setPendingProfessorColor(COLOR_PALETTE[0]);
   };
 
   const removeEntity = (type: 'professors' | 'subjects' | 'classrooms', id: number) => {
@@ -1082,13 +1085,13 @@ export default function App() {
           <button
             type="button"
             onClick={() => setIsSidebarCollapsed((v) => !v)}
-            className="absolute top-6 right-0 z-20 translate-x-1/2 bg-midnight-blue border border-border-blue-gray rounded-full w-7 h-7 flex items-center justify-center hover:bg-slate-blue transition-colors"
+            className="absolute top-6 right-80 -translate-x-1/2 z-20 bg-midnight-blue border border-border-blue-gray rounded-full w-7 h-7 flex items-center justify-center hover:bg-slate-blue transition-colors"
             aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {isSidebarCollapsed ? (
-              <ChevronLeft className="w-4 h-4 text-muted-steel" />
-            ) : (
               <ChevronRight className="w-4 h-4 text-muted-steel" />
+            ) : (
+              <ChevronLeft className="w-4 h-4 text-muted-steel" />
             )}
           </button>
         </main>
@@ -1231,14 +1234,17 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="mb-6 flex items-center justify-center">
+                <div className="mb-6 flex flex-col items-center justify-center gap-3">
                   <input
                     type="color"
-                    defaultValue={COLOR_PALETTE[0]}
-                    onChange={(e) => finalizeAddProfessor(e.target.value)}
+                    value={pendingProfessorColor}
+                    onChange={(e) => setPendingProfessorColor(e.target.value)}
                     className="w-24 h-24 bg-transparent border border-border-blue-gray rounded-full cursor-pointer"
                     aria-label="Pick professor color"
                   />
+                  <div className="text-xs text-muted-steel font-mono uppercase tracking-widest">
+                    {pendingProfessorColor}
+                  </div>
                 </div>
 
                 <div className="flex gap-2">
@@ -1247,6 +1253,12 @@ export default function App() {
                     className="flex-1 btn-outline"
                   >
                     Cancel
+                  </button>
+                  <button
+                    onClick={() => finalizeAddProfessor(pendingProfessorColor)}
+                    className="flex-1 btn-teal"
+                  >
+                    OK
                   </button>
                 </div>
               </motion.div>

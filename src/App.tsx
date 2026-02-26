@@ -1579,16 +1579,16 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
                 <button onClick={() => setStep('subject')} className="flex-1 btn-outline py-1 text-xs">Back</button>
                 <button 
                   disabled={!formData.professorId}
-                  onClick={() => setStep('classes_taught')}
+                  onClick={() => setStep(formData.mode === 'lecture' ? 'classes_taught' : 'batch_selection')}
                   className="flex-1 btn-teal py-1 text-xs"
                 >
-                  Next: Classes Taught
+                  {formData.mode === 'lecture' ? 'Next: Classes Taught' : 'Next: Batches'}
                 </button>
               </div>
             </div>
           )}
 
-          {step === 'classes_taught' && (
+          {step === 'classes_taught' && formData.mode === 'lecture' && (
             <div>
               <label className="block text-[10px] font-bold uppercase mb-1 text-muted-steel">Classes Taught</label>
               <div className="max-h-40 overflow-y-auto space-y-1 mb-3 custom-scrollbar pr-1">
@@ -1613,20 +1613,16 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
                 <button onClick={() => setStep('professor')} className="flex-1 btn-outline py-1 text-xs">Back</button>
                 <button 
                   disabled={formData.allowedClassIds.length === 0}
-                  onClick={() => {
-                    const batchIdsFromSelectedClasses = classes?.filter(c => formData.allowedClassIds.includes(c.id)).flatMap(c => c.batches.map(b => b.id)) ?? [];
-                    setFormData({ ...formData, allowedBatchIds: batchIdsFromSelectedClasses });
-                    setStep('batch_selection');
-                  }}
+                  onClick={() => setStep('weightage')}
                   className="flex-1 btn-teal py-1 text-xs"
                 >
-                  Next: Batches
+                  Next: Weightage
                 </button>
               </div>
             </div>
           )}
 
-          {step === 'batch_selection' && (
+          {step === 'batch_selection' && formData.mode === 'lab' && (
             <div>
               <label className="block text-[10px] font-bold uppercase mb-1 text-muted-steel">Batches (A1–H3)</label>
               <div className="max-h-40 overflow-y-auto space-y-1 mb-3 custom-scrollbar pr-1">
@@ -1648,7 +1644,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
                 ))}
               </div>
               <div className="flex gap-2">
-                <button onClick={() => setStep('classes_taught')} className="flex-1 btn-outline py-1 text-xs">Back</button>
+                <button onClick={() => setStep('professor')} className="flex-1 btn-outline py-1 text-xs">Back</button>
                 <button 
                   disabled={formData.allowedBatchIds.length === 0}
                   onClick={() => setStep('weightage')}
@@ -1679,7 +1675,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
                 </button>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => setStep('batch_selection')} className="flex-1 btn-outline py-1 text-xs">Back</button>
+                <button onClick={() => setStep(formData.mode === 'lecture' ? 'classes_taught' : 'batch_selection')} className="flex-1 btn-outline py-1 text-xs">Back</button>
                 <button onClick={handleAdd} className="flex-1 btn-teal py-1 text-xs">Finish</button>
               </div>
             </div>

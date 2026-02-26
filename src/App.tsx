@@ -8,7 +8,7 @@ import {
   DragStartEvent, 
   DragEndEvent 
 } from '@dnd-kit/core';
-import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2, ChevronRight, ChevronLeft, Printer } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './utils';
 import { 
@@ -103,33 +103,6 @@ const DraggableChip = ({ id, type, data, onRemove, onUpdate, professors }: { id:
           <span className="truncate font-medium">{data.name}</span>
           {professor && <span className="text-[10px] text-muted-steel truncate">{professor.name}</span>}
         </div>
-        {type === 'subject' && (
-          <div className="flex items-center gap-1 ml-auto shrink-0">
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onUpdate && data.weightage > 1) onUpdate({ ...data, weightage: data.weightage - 1 });
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-              className="w-5 h-5 flex items-center justify-center rounded bg-deep-navy hover:bg-slate-blue text-[10px] font-bold"
-            >
-              -
-            </button>
-            <span className="text-[10px] font-mono w-4 text-center">{data.weightage}h</span>
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onUpdate) onUpdate({ ...data, weightage: data.weightage + 1 });
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-              className="w-5 h-5 flex items-center justify-center rounded bg-deep-navy hover:bg-slate-blue text-[10px] font-bold"
-            >
-              +
-            </button>
-          </div>
-        )}
       </div>
       {onRemove && (
         <button 
@@ -922,22 +895,33 @@ export default function App() {
           {/* Timetable Grid */}
           <div className="flex-1 overflow-auto p-8 bg-deep-navy">
               <div className={cn("mx-auto", !isSidebarCollapsed && "max-w-7xl")}>
-              {/* Day Tabs */}
-              <div className="flex gap-1 mb-8">
-                {DAYS.map((day, idx) => (
-                  <button
-                    key={day}
-                    onClick={() => setActiveDay(idx)}
-                    className={cn(
-                      "px-6 py-2 text-sm font-medium rounded-t-md transition-all border-b-2",
-                      activeDay === idx 
-                        ? "bg-midnight-blue border-muted-teal text-muted-teal shadow-none" 
-                        : "text-muted-steel border-transparent hover:bg-midnight-blue/50"
-                    )}
-                  >
-                    {day}
-                  </button>
-                ))}
+              {/* Day Tabs + Print */}
+              <div className="flex items-center gap-3 mb-8">
+                <div className="flex gap-1">
+                  {DAYS.map((day, idx) => (
+                    <button
+                      key={day}
+                      onClick={() => setActiveDay(idx)}
+                      className={cn(
+                        "px-6 py-2 text-sm font-medium rounded-t-md transition-all border-b-2",
+                        activeDay === idx 
+                          ? "bg-midnight-blue border-muted-teal text-muted-teal shadow-none" 
+                          : "text-muted-steel border-transparent hover:bg-midnight-blue/50"
+                      )}
+                    >
+                      {day}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={exportPdf}
+                  className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-border-blue-gray text-muted-steel hover:bg-midnight-blue hover:text-muted-teal transition-colors no-print"
+                  aria-label="Print"
+                >
+                  <Printer className="w-4 h-4" />
+                  Print
+                </button>
               </div>
 
               {/* Grid */}
@@ -1019,12 +1003,6 @@ export default function App() {
                   >
                     AUTO-CREATE TIMETABLE
                   </button>
-                  <button
-                    onClick={exportPdf}
-                    className="w-full btn-outline py-2 text-xs mt-3"
-                  >
-                    EXPORT AS PDF
-                  </button>
                 </div>
 
                 <div className="flex-1">
@@ -1086,11 +1064,14 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          {/* Sidebar toggle handle */}
+          {/* Sidebar toggle handle - moves with sidebar collapse */}
           <button
             type="button"
             onClick={() => setIsSidebarCollapsed((v) => !v)}
-            className="absolute top-6 right-80 -translate-x-1/2 z-20 bg-midnight-blue border border-border-blue-gray rounded-full w-7 h-7 flex items-center justify-center hover:bg-slate-blue transition-colors"
+            className={cn(
+              "absolute top-6 -translate-x-1/2 z-20 bg-midnight-blue border border-border-blue-gray rounded-full w-7 h-7 flex items-center justify-center hover:bg-slate-blue transition-all duration-200",
+              isSidebarCollapsed ? "right-0" : "right-80"
+            )}
             aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {isSidebarCollapsed ? (

@@ -26,6 +26,16 @@
   }
 }
 
+.theme-light {
+  --color-deep-navy: #f7f1e6;       /* off-white background */
+  --color-midnight-blue: #efe1cf;   /* card background */
+  --color-slate-blue: #e0c3a3;      /* hover/background accents */
+  --color-muted-steel: #6b4b34;     /* brownish text */
+  --color-border-blue-gray: #d1b89a;/* soft brown border */
+  --color-muted-teal: #8b5e3a;      /* accent brown */
+  color: #3b2a20;
+}
+
 .institutional-grid {
   @apply border-collapse border border-border-blue-gray bg-midnight-blue;
 }

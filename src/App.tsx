@@ -8,7 +8,7 @@ import {
   DragStartEvent, 
   DragEndEvent 
 } from '@dnd-kit/core';
-import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2, ChevronRight, ChevronLeft, ArrowLeft } from 'lucide-react';
+import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2, ChevronRight, ChevronLeft, ArrowLeft, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './utils';
 import { 
@@ -240,6 +240,10 @@ export default function App() {
   const [inchargeAuthenticated, setInchargeAuthenticated] = useState(false);
   const [inchargePassword, setInchargePassword] = useState('');
   const [inchargeError, setInchargeError] = useState('');
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    return window.localStorage.getItem('timecards.theme') === 'light' ? 'light' : 'dark';
+  });
 
   const getDateForDay = (dayIdx: number) => {
     const date = new Date(mondayDate);
@@ -248,10 +252,6 @@ export default function App() {
   };
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const exportPdf = () => {
-    window.print();
-  };
-
   const LOCAL_STACKS_KEY = 'timecards.stacks.local.v1';
 
   const reseedCountersFromStacks = (next: { professors: Professor[]; subjects: Subject[]; classrooms: Classroom[] }) => {
@@ -262,6 +262,15 @@ export default function App() {
     subjectIdCounter = Math.max(subjectIdCounter, maxSubjectId + 1);
     classroomIdCounter = Math.max(classroomIdCounter, maxClassroomId + 1);
   };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem('timecards.theme', theme);
+    } catch {
+      // ignore
+    }
+  }, [theme]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -693,14 +702,17 @@ export default function App() {
 
     // For each class and its batches
     for (const cls of classes) {
-      // Precompute all slots for this class
+      // Precompute all slots for this class:
+      // - Days in random order
+      // - Within each day, slots left-to-right (9–5)
+      const dayOrder = [0, 1, 2, 3, 4];
+      dayOrder.sort(() => Math.random() - 0.5);
       let classSlots: { day: number, slot: number }[] = [];
-      for (let d = 0; d < 5; d++) {
+      for (const d of dayOrder) {
         for (let s = 0; s < 8; s++) {
           classSlots.push({ day: d, slot: s });
         }
       }
-      classSlots.sort(() => Math.random() - 0.5);
 
       // Max 2 lecture hours per class per day
       const lectureHoursPerClassDay: Record<string, number> = {};
@@ -831,7 +843,7 @@ export default function App() {
 
   if (!inchargeAuthenticated) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-deep-navy p-4">
+      <div className={cn("min-h-screen flex items-center justify-center bg-deep-navy p-4", theme === 'light' && "theme-light")}>
         {loginStep === 'choose' && (
           <div className="w-full max-w-xs flex flex-col gap-3">
             <div className="rounded-xl border border-border-blue-gray bg-midnight-blue shadow-lg overflow-hidden p-2 flex flex-col gap-2">
@@ -933,7 +945,7 @@ export default function App() {
 
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-      <div className="min-h-screen flex flex-col no-print">
+      <div className={cn("min-h-screen flex flex-col no-print", theme === 'light' && "theme-light")}>
         {/* Top Bar */}
         <header className="h-16 bg-midnight-blue border-b border-border-blue-gray px-6 flex items-center justify-between sticky top-0 z-30">
           <div className="flex items-center gap-8">
@@ -1201,6 +1213,16 @@ export default function App() {
             )}
           </button>
         </main>
+
+        {/* Theme settings button */}
+        <button
+          type="button"
+          onClick={() => setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))}
+          className="fixed bottom-4 right-4 z-40 bg-midnight-blue border border-border-blue-gray rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-blue transition-colors"
+          aria-label="Toggle theme"
+        >
+          <Settings className="w-5 h-5 text-muted-steel" />
+        </button>
 
         {/* Conflict Modal */}
         <AnimatePresence>

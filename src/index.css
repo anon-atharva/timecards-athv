@@ -36,6 +36,17 @@
   color: #3b2a20;
 }
 
+.theme-light,
+.theme-light * {
+  color: #3b2a20;
+}
+
+.theme-light .text-slate-100,
+.theme-light .text-white,
+.theme-light .text-slate-200 {
+  color: #3b2a20 !important;
+}
+
 .institutional-grid {
   @apply border-collapse border border-border-blue-gray bg-midnight-blue;
 }

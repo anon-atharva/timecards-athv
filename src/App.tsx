@@ -323,7 +323,7 @@ export default function App() {
     format: 'timecards-stacks';
     version: 1;
     professors: Array<{ name: string; color?: string }>;
-    subjects: Array<{ name: string; weightage?: number; professor?: string; allowedClasses?: string[] }>;
+    subjects: Array<{ name: string; weightage?: number; professor?: string; allowedClasses?: string[]; allowedBatches?: string[]; mode?: 'lecture' | 'lab' }>;
     classrooms: Array<{ name: string }>;
   };
 
@@ -336,6 +336,8 @@ export default function App() {
 
   const exportStacksToFile = () => {
     const classNameById = new Map<number, string>(allClasses.map(c => [c.id, c.name]));
+    const batchNameById = new Map<number, string>();
+    for (const c of allClasses) for (const b of c.batches) batchNameById.set(b.id, b.name);
     const professorNameById = new Map<number, string>(professors.map(p => [p.id, p.name]));
 
     const file: ExportFileV1 = {
@@ -349,6 +351,8 @@ export default function App() {
         allowedClasses: (s.allowed_class_ids ?? [])
           .map(id => classNameById.get(id))
           .filter((x): x is string => typeof x === 'string'),
+        allowedBatches: (s.allowed_batch_ids ?? []).map(id => batchNameById.get(id)).filter((x): x is string => typeof x === 'string'),
+        mode: s.mode,
       })),
       classrooms: classrooms.map(c => ({ name: c.name })),
     };
@@ -381,6 +385,8 @@ export default function App() {
 
     const currentYearClasses = classes.length > 0 ? classes : allClasses.filter(c => c.year_id === (selectedYear?.id ?? -1));
     const classIdByName = new Map<string, number>(currentYearClasses.map(c => [c.name, c.id]));
+    const batchIdByName = new Map<string, number>();
+    for (const c of currentYearClasses) for (const b of c.batches) batchIdByName.set(b.name, b.id);
 
     const nextProfessors: Professor[] = [];
     const profIdByName = new Map<string, number>();
@@ -427,6 +433,11 @@ export default function App() {
       const allowed_class_ids = allowedNames
         .map((n: any) => (typeof n === 'string' ? classIdByName.get(n.trim()) : undefined))
         .filter((x): x is number => typeof x === 'number');
+      const allowedBatchNames = Array.isArray(s?.allowedBatches) ? s.allowedBatches : [];
+      const allowed_batch_ids = allowedBatchNames
+        .map((n: any) => (typeof n === 'string' ? batchIdByName.get(n.trim()) : undefined))
+        .filter((x): x is number => typeof x === 'number');
+      const mode = s?.mode === 'lab' || s?.mode === 'lecture' ? s.mode : undefined;
 
       nextSubjects.push({
         id: subjectIdCounter++,
@@ -434,6 +445,8 @@ export default function App() {
         weightage,
         professor_id,
         allowed_class_ids: Array.from(new Set(allowed_class_ids)),
+        allowed_batch_ids: Array.from(new Set(allowed_batch_ids)),
+        mode,
       });
     }
 
@@ -462,6 +475,7 @@ export default function App() {
         mode: extra?.mode ?? 'lecture',
         professor_id: extra?.professor_id,
         allowed_class_ids: extra?.allowed_class_ids ?? [],
+        allowed_batch_ids: extra?.allowed_batch_ids ?? [],
       };
       setSubjects(prev => [...prev, newSubject]);
     }
@@ -779,11 +793,12 @@ export default function App() {
             }
           }
         } else {
-          // Lab: allocate hours batch-wise; max 2 hours per subject per batch per day
+          // Lab: allocate hours batch-wise; use batch criteria (allowed_batch_ids)
           const labHoursPerSubjectPerDay: Record<string, number> = {};
           const labKey = (batchId: number, day: number) => `${cls.id}:${batchId}:${sub.id}:${day}`;
 
           for (const batch of cls.batches) {
+            if (sub.allowed_batch_ids && sub.allowed_batch_ids.length > 0 && !sub.allowed_batch_ids.includes(batch.id)) continue;
             let availableSlots = [...classSlots];
             for (let h = 0; h < sub.weightage; h++) {
               if (availableSlots.length === 0) break;
@@ -1422,8 +1437,8 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
   onRequestAddProfessor?: (name: string) => void,
   classes?: ClassWithBatches[]
 }) => {
-  const [step, setStep] = useState<'none' | 'subject' | 'mode' | 'professor' | 'classes_taught' | 'weightage' | 'generic'>('none');
-  const [formData, setFormData] = useState({ name: '', professorId: '', weightage: 2, allowedClassIds: [] as number[], mode: 'lecture' as 'lecture' | 'lab' });
+  const [step, setStep] = useState<'none' | 'subject' | 'mode' | 'professor' | 'classes_taught' | 'batch_selection' | 'weightage' | 'generic'>('none');
+  const [formData, setFormData] = useState({ name: '', professorId: '', weightage: 2, allowedClassIds: [] as number[], allowedBatchIds: [] as number[], mode: 'lecture' as 'lecture' | 'lab' });
   const [newProfName, setNewProfName] = useState('');
 
   const handleAdd = () => {
@@ -1431,11 +1446,17 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
       professor_id: formData.professorId ? parseInt(formData.professorId) : undefined, 
       weightage: formData.weightage,
       allowed_class_ids: formData.allowedClassIds,
+      allowed_batch_ids: formData.allowedBatchIds,
       mode: formData.mode,
     });
     setStep('none');
-    setFormData({ name: '', professorId: '', weightage: 2, allowedClassIds: [], mode: 'lecture' });
+    setFormData({ name: '', professorId: '', weightage: 2, allowedClassIds: [], allowedBatchIds: [], mode: 'lecture' });
   };
+
+  const allBatchesOrdered = React.useMemo(() => {
+    if (!classes) return [];
+    return classes.flatMap(cls => cls.batches);
+  }, [classes]);
 
   return (
     <div className="sidebar-stack">
@@ -1592,6 +1613,44 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
                 <button onClick={() => setStep('professor')} className="flex-1 btn-outline py-1 text-xs">Back</button>
                 <button 
                   disabled={formData.allowedClassIds.length === 0}
+                  onClick={() => {
+                    const batchIdsFromSelectedClasses = classes?.filter(c => formData.allowedClassIds.includes(c.id)).flatMap(c => c.batches.map(b => b.id)) ?? [];
+                    setFormData({ ...formData, allowedBatchIds: batchIdsFromSelectedClasses });
+                    setStep('batch_selection');
+                  }}
+                  className="flex-1 btn-teal py-1 text-xs"
+                >
+                  Next: Batches
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 'batch_selection' && (
+            <div>
+              <label className="block text-[10px] font-bold uppercase mb-1 text-muted-steel">Batches (A1–H3)</label>
+              <div className="max-h-40 overflow-y-auto space-y-1 mb-3 custom-scrollbar pr-1">
+                {allBatchesOrdered.map(batch => (
+                  <label key={batch.id} className="flex items-center gap-2 p-1.5 hover:bg-slate-blue rounded cursor-pointer transition-colors">
+                    <input 
+                      type="checkbox"
+                      checked={formData.allowedBatchIds.includes(batch.id)}
+                      onChange={(e) => {
+                        const ids = e.target.checked 
+                          ? [...formData.allowedBatchIds, batch.id]
+                          : formData.allowedBatchIds.filter(id => id !== batch.id);
+                        setFormData({ ...formData, allowedBatchIds: ids });
+                      }}
+                      className="rounded border-border-blue-gray bg-deep-navy text-muted-teal focus:ring-muted-teal"
+                    />
+                    <span className="text-xs">{batch.name}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setStep('classes_taught')} className="flex-1 btn-outline py-1 text-xs">Back</button>
+                <button 
+                  disabled={formData.allowedBatchIds.length === 0}
                   onClick={() => setStep('weightage')}
                   className="flex-1 btn-teal py-1 text-xs"
                 >
@@ -1620,7 +1679,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
                 </button>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => setStep('classes_taught')} className="flex-1 btn-outline py-1 text-xs">Back</button>
+                <button onClick={() => setStep('batch_selection')} className="flex-1 btn-outline py-1 text-xs">Back</button>
                 <button onClick={handleAdd} className="flex-1 btn-teal py-1 text-xs">Finish</button>
               </div>
             </div>

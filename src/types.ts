@@ -41,6 +41,7 @@ export interface Subject {
   mode?: 'lecture' | 'lab';
   professor_id?: number;
   allowed_class_ids?: number[];
+  allowed_batch_ids?: number[];
 }
 
 export interface Classroom {

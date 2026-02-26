@@ -816,21 +816,21 @@ export default function App() {
                 onClick={() => setLoginStep('under_construction')}
                 className="w-full py-4 px-6 text-left text-sm font-medium text-muted-teal hover:bg-slate-blue rounded-lg transition-colors"
               >
-                Student login
+                Student Login
               </button>
               <button
                 type="button"
                 onClick={() => setLoginStep('under_construction')}
                 className="w-full py-4 px-6 text-left text-sm font-medium text-muted-teal hover:bg-slate-blue rounded-lg transition-colors"
               >
-                Professor login
+                Professor Login
               </button>
               <button
                 type="button"
                 onClick={() => setLoginStep('incharge_password')}
                 className="w-full py-4 px-6 text-left text-sm font-medium text-muted-teal hover:bg-slate-blue rounded-lg transition-colors"
               >
-                Incharge login
+                Incharge Login
               </button>
             </div>
           </div>

@@ -202,10 +202,15 @@ const DroppableCell = ({
             )}
             style={cardStyle}
           >
-            <div className="flex flex-col leading-snug flex-1 truncate">
-              <span className="font-bold text-sm truncate text-muted-teal">{subject?.name || '---'}</span>
-              <span className="text-xs text-muted-steel truncate font-medium">
-                {professor?.name || '---'} <span className="opacity-40 mx-1">•</span> {classroom?.name || '---'}
+            <div className="flex flex-col leading-snug flex-1 truncate text-black">
+              <span className="font-bold italic text-sm truncate">
+                {subject?.name || '---'}
+              </span>
+              <span className="text-xs truncate font-medium">
+                {professor?.name || '---'}
+              </span>
+              <span className="text-xs truncate">
+                {classroom?.name || '---'}
               </span>
             </div>
             <button 
@@ -1089,9 +1094,9 @@ export default function App() {
             aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {isSidebarCollapsed ? (
-              <ChevronRight className="w-4 h-4 text-muted-steel" />
-            ) : (
               <ChevronLeft className="w-4 h-4 text-muted-steel" />
+            ) : (
+              <ChevronRight className="w-4 h-4 text-muted-steel" />
             )}
           </button>
         </main>

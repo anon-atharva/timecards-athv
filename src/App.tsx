@@ -8,7 +8,7 @@ import {
   DragStartEvent, 
   DragEndEvent 
 } from '@dnd-kit/core';
-import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2, ChevronRight, ChevronLeft, Printer } from 'lucide-react';
+import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2, ChevronRight, ChevronLeft, ArrowLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './utils';
 import { 
@@ -235,6 +235,11 @@ export default function App() {
     const monday = new Date(today.setDate(diff));
     return monday.toISOString().split('T')[0];
   });
+
+  const [loginStep, setLoginStep] = useState<'choose' | 'incharge_password' | 'under_construction'>('choose');
+  const [inchargeAuthenticated, setInchargeAuthenticated] = useState(false);
+  const [inchargePassword, setInchargePassword] = useState('');
+  const [inchargeError, setInchargeError] = useState('');
 
   const getDateForDay = (dayIdx: number) => {
     const date = new Date(mondayDate);
@@ -800,6 +805,108 @@ export default function App() {
     setTimetable(newEntries);
   };
 
+  if (!inchargeAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-deep-navy p-4">
+        {loginStep === 'choose' && (
+          <div className="w-full max-w-xs flex flex-col gap-3">
+            <div className="rounded-xl border border-border-blue-gray bg-midnight-blue shadow-lg overflow-hidden p-2 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => setLoginStep('under_construction')}
+                className="w-full py-4 px-6 text-left text-sm font-medium text-muted-teal hover:bg-slate-blue rounded-lg transition-colors"
+              >
+                Student login
+              </button>
+              <button
+                type="button"
+                onClick={() => setLoginStep('under_construction')}
+                className="w-full py-4 px-6 text-left text-sm font-medium text-muted-teal hover:bg-slate-blue rounded-lg transition-colors"
+              >
+                Professor login
+              </button>
+              <button
+                type="button"
+                onClick={() => setLoginStep('incharge_password')}
+                className="w-full py-4 px-6 text-left text-sm font-medium text-muted-teal hover:bg-slate-blue rounded-lg transition-colors"
+              >
+                Incharge login
+              </button>
+            </div>
+          </div>
+        )}
+        {loginStep === 'incharge_password' && (
+          <div className="w-full max-w-xs flex flex-col gap-4">
+            <div className="rounded-xl border border-border-blue-gray bg-midnight-blue shadow-lg p-6 flex flex-col gap-4">
+              <h2 className="text-lg font-semibold text-muted-teal">Incharge login</h2>
+              <input
+                type="password"
+                value={inchargePassword}
+                onChange={(e) => {
+                  setInchargePassword(e.target.value);
+                  setInchargeError('');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (inchargePassword.trim() === 'timecardsadmin') {
+                      setInchargeAuthenticated(true);
+                      setInchargeError('');
+                    } else {
+                      setInchargeError('Invalid password');
+                    }
+                  }
+                }}
+                placeholder="Enter password"
+                className="w-full text-sm border border-border-blue-gray bg-deep-navy text-white px-4 py-3 rounded-lg focus:outline-none focus:ring-1 focus:ring-muted-teal"
+                autoFocus
+              />
+              {inchargeError && (
+                <p className="text-xs text-red-400">{inchargeError}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLoginStep('choose')}
+                  className="flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium border border-border-blue-gray text-muted-steel hover:bg-slate-blue rounded-lg transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4" /> Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (inchargePassword.trim() === 'timecardsadmin') {
+                      setInchargeAuthenticated(true);
+                      setInchargeError('');
+                    } else {
+                      setInchargeError('Invalid password');
+                    }
+                  }}
+                  className="flex-1 py-2 text-sm font-medium bg-muted-teal text-deep-navy rounded-lg hover:opacity-90 transition-opacity"
+                >
+                  Submit
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {loginStep === 'under_construction' && (
+          <div className="w-full max-w-xs flex flex-col gap-4">
+            <div className="rounded-xl border border-border-blue-gray bg-midnight-blue shadow-lg p-8 flex flex-col gap-6 items-center text-center">
+              <p className="text-muted-teal font-medium">Under construction</p>
+              <button
+                type="button"
+                onClick={() => setLoginStep('choose')}
+                className="flex items-center gap-2 py-2 px-4 text-sm font-medium border border-border-blue-gray text-muted-steel hover:bg-slate-blue rounded-lg transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" /> Back
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
       <div className="min-h-screen flex flex-col no-print">
@@ -895,33 +1002,22 @@ export default function App() {
           {/* Timetable Grid */}
           <div className="flex-1 overflow-auto p-8 bg-deep-navy">
               <div className={cn("mx-auto", !isSidebarCollapsed && "max-w-7xl")}>
-              {/* Day Tabs + Print */}
-              <div className="flex items-center gap-3 mb-8">
-                <div className="flex gap-1">
-                  {DAYS.map((day, idx) => (
-                    <button
-                      key={day}
-                      onClick={() => setActiveDay(idx)}
-                      className={cn(
-                        "px-6 py-2 text-sm font-medium rounded-t-md transition-all border-b-2",
-                        activeDay === idx 
-                          ? "bg-midnight-blue border-muted-teal text-muted-teal shadow-none" 
-                          : "text-muted-steel border-transparent hover:bg-midnight-blue/50"
-                      )}
-                    >
-                      {day}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={exportPdf}
-                  className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-border-blue-gray text-muted-steel hover:bg-midnight-blue hover:text-muted-teal transition-colors no-print"
-                  aria-label="Print"
-                >
-                  <Printer className="w-4 h-4" />
-                  Print
-                </button>
+              {/* Day Tabs */}
+              <div className="flex gap-1 mb-8">
+                {DAYS.map((day, idx) => (
+                  <button
+                    key={day}
+                    onClick={() => setActiveDay(idx)}
+                    className={cn(
+                      "px-6 py-2 text-sm font-medium rounded-t-md transition-all border-b-2",
+                      activeDay === idx 
+                        ? "bg-midnight-blue border-muted-teal text-muted-teal shadow-none" 
+                        : "text-muted-steel border-transparent hover:bg-midnight-blue/50"
+                    )}
+                  >
+                    {day}
+                  </button>
+                ))}
               </div>
 
               {/* Grid */}

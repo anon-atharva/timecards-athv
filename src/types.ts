@@ -47,6 +47,10 @@ export interface Subject {
 export interface Classroom {
   id: number;
   name: string;
+  /** 'lecture' = only for lecture subjects; 'lab' = only for lab subjects */
+  room_type?: 'lecture' | 'lab';
+  /** If set, this room is only allotted to these subject IDs. Empty/undefined = all subjects of room_type */
+  allowed_subject_ids?: number[];
 }
 
 export interface TimetableEntry {

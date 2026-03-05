@@ -8,7 +8,7 @@ import {
   DragStartEvent, 
   DragEndEvent 
 } from '@dnd-kit/core';
-import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2, ChevronRight, ChevronLeft, ArrowLeft, Settings } from 'lucide-react';
+import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2, ChevronRight, ChevronLeft, ArrowLeft, Settings, UtensilsCrossed } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './utils';
 import { 
@@ -17,6 +17,10 @@ import {
 } from './types';
 
 const INITIAL_YEAR_NAME = 'Spring 2026';
+const LUNCH_COLOR = '#e6d9c8';
+const LUNCH_SLOT_12_1 = 3; // index in TIME_SLOTS
+const LUNCH_SLOT_1_2 = 4;
+
 const COLOR_PALETTE = [
   '#0EA5E9', // sky
   '#8B5CF6', // violet
@@ -324,7 +328,7 @@ export default function App() {
     version: 1;
     professors: Array<{ name: string; color?: string }>;
     subjects: Array<{ name: string; weightage?: number; professor?: string; allowedClasses?: string[]; allowedBatches?: string[]; mode?: 'lecture' | 'lab' }>;
-    classrooms: Array<{ name: string }>;
+    classrooms: Array<{ name: string; roomType?: 'lecture' | 'lab'; allowedSubjects?: string[] }>;
   };
 
   const normalizeColor = (c: unknown) => {
@@ -339,6 +343,7 @@ export default function App() {
     const batchNameById = new Map<number, string>();
     for (const c of allClasses) for (const b of c.batches) batchNameById.set(b.id, b.name);
     const professorNameById = new Map<number, string>(professors.map(p => [p.id, p.name]));
+    const subjectNameById = new Map<number, string>(subjects.map(s => [s.id, s.name]));
 
     const file: ExportFileV1 = {
       format: 'timecards-stacks',
@@ -354,7 +359,11 @@ export default function App() {
         allowedBatches: (s.allowed_batch_ids ?? []).map(id => batchNameById.get(id)).filter((x): x is string => typeof x === 'string'),
         mode: s.mode,
       })),
-      classrooms: classrooms.map(c => ({ name: c.name })),
+      classrooms: classrooms.map(c => ({
+        name: c.name,
+        roomType: c.room_type,
+        allowedSubjects: (c.allowed_subject_ids ?? []).map(id => subjectNameById.get(id)).filter((x): x is string => typeof x === 'string'),
+      })),
     };
 
     const text = JSON.stringify(file, null, 2);
@@ -409,14 +418,6 @@ export default function App() {
       profIdByName.set(name, id);
     }
 
-    const rawClassrooms = Array.isArray(parsed?.classrooms) ? parsed.classrooms : [];
-    const nextClassrooms: Classroom[] = [];
-    for (const c of rawClassrooms) {
-      const name = typeof c?.name === 'string' ? c.name.trim() : '';
-      if (!name) continue;
-      nextClassrooms.push({ id: classroomIdCounter++, name });
-    }
-
     const rawSubjects = Array.isArray(parsed?.subjects) ? parsed.subjects : [];
     const nextSubjects: Subject[] = [];
     for (const s of rawSubjects) {
@@ -447,6 +448,25 @@ export default function App() {
         allowed_class_ids: Array.from(new Set(allowed_class_ids)),
         allowed_batch_ids: Array.from(new Set(allowed_batch_ids)),
         mode,
+      });
+    }
+    const subjectIdByName = new Map<string, number>(nextSubjects.map(s => [s.name, s.id]));
+
+    const rawClassrooms = Array.isArray(parsed?.classrooms) ? parsed.classrooms : [];
+    const nextClassrooms: Classroom[] = [];
+    for (const c of rawClassrooms) {
+      const name = typeof c?.name === 'string' ? c.name.trim() : '';
+      if (!name) continue;
+      const roomType = c?.roomType === 'lab' || c?.roomType === 'lecture' ? c.roomType : undefined;
+      const allowedSubjectNames = Array.isArray(c?.allowedSubjects) ? c.allowedSubjects : [];
+      const allowed_subject_ids = allowedSubjectNames
+        .map((n: any) => (typeof n === 'string' ? subjectIdByName.get(n.trim()) : undefined))
+        .filter((x): x is number => typeof x === 'number');
+      nextClassrooms.push({
+        id: classroomIdCounter++,
+        name,
+        room_type: roomType,
+        allowed_subject_ids: allowed_subject_ids.length ? allowed_subject_ids : undefined,
       });
     }
 
@@ -481,7 +501,12 @@ export default function App() {
     }
 
     if (type === 'classrooms') {
-      const newClassroom: Classroom = { id: classroomIdCounter++, name };
+      const newClassroom: Classroom = {
+        id: classroomIdCounter++,
+        name,
+        room_type: extra?.room_type,
+        allowed_subject_ids: extra?.allowed_subject_ids?.length ? extra.allowed_subject_ids : undefined,
+      };
       setClassrooms(prev => [...prev, newClassroom]);
     }
   };
@@ -759,7 +784,12 @@ export default function App() {
               }
 
               const profId = sub.professor_id || (professors[Math.floor(Math.random() * professors.length)]?.id);
-              const room = classrooms[Math.floor(Math.random() * classrooms.length)];
+              const lectureRooms = classrooms.filter(r => r.room_type !== 'lab');
+              const eligibleRooms = lectureRooms.filter(r =>
+                !r.allowed_subject_ids?.length || r.allowed_subject_ids.includes(sub.id)
+              );
+              const pool = eligibleRooms.length ? eligibleRooms : lectureRooms;
+              const room = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
 
               const profKey = `${day}:${slot}:${profId}`;
               const roomKey = `${day}:${slot}:${room?.id}`;
@@ -817,7 +847,12 @@ export default function App() {
                 }
 
                 const profId = sub.professor_id || (professors[Math.floor(Math.random() * professors.length)]?.id);
-                const room = classrooms[Math.floor(Math.random() * classrooms.length)];
+                const labRooms = classrooms.filter(r => r.room_type === 'lab');
+                const eligibleRooms = labRooms.filter(r =>
+                  !r.allowed_subject_ids?.length || r.allowed_subject_ids.includes(sub.id)
+                );
+                const pool = eligibleRooms.length ? eligibleRooms : labRooms;
+                const room = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
 
                 const profKey = `${day}:${slot}:${profId}`;
                 const roomKey = `${day}:${slot}:${room?.id}`;
@@ -854,6 +889,48 @@ export default function App() {
     }
 
     setTimetable(newEntries);
+  };
+
+  const allotLunch = () => {
+    if (!user || classes.length === 0) return;
+    let lunchProfessor = professors.find(p => p.name === 'Lunch' && p.color === LUNCH_COLOR);
+    if (!lunchProfessor) {
+      lunchProfessor = { id: professorIdCounter++, name: 'Lunch', color: LUNCH_COLOR };
+      setProfessors(prev => [...prev, lunchProfessor!]);
+    }
+    let lunchSubject = subjects.find(s => s.name === 'Lunch');
+    if (!lunchSubject) {
+      lunchSubject = { id: subjectIdCounter++, name: 'Lunch', weightage: 0, mode: 'lecture' as const };
+      setSubjects(prev => [...prev, lunchSubject!]);
+    }
+    const existingKeys = new Set(
+      timetable.map(e => `${e.day}:${e.time_slot}:${e.class_id}:${e.batch_id}`)
+    );
+    const newEntries: TimetableEntry[] = [];
+    let slotToggle = 0;
+    for (const cls of classes) {
+      for (const batch of cls.batches) {
+        for (let day = 0; day < 5; day++) {
+          const slot = slotToggle % 2 === 0 ? LUNCH_SLOT_12_1 : LUNCH_SLOT_1_2;
+          slotToggle++;
+          const key = `${day}:${slot}:${cls.id}:${batch.id}`;
+          if (existingKeys.has(key)) continue;
+          existingKeys.add(key);
+          newEntries.push({
+            id: timetableEntryIdCounter++,
+            day,
+            time_slot: slot,
+            class_id: cls.id,
+            batch_id: batch.id,
+            subject_id: lunchSubject!.id,
+            professor_id: lunchProfessor!.id,
+            classroom_id: null,
+            exception_flag: false,
+          });
+        }
+      }
+    }
+    setTimetable(prev => [...prev, ...newEntries]);
   };
 
   if (!inchargeAuthenticated) {
@@ -1150,6 +1227,13 @@ export default function App() {
                   >
                     AUTO-CREATE TIMETABLE
                   </button>
+                  <button 
+                    onClick={allotLunch}
+                    className="w-full btn-outline py-3 flex items-center justify-center gap-2"
+                  >
+                    <UtensilsCrossed className="w-4 h-4" />
+                    ALLOT LUNCH
+                  </button>
                 </div>
 
                 <div className="flex-1">
@@ -1169,8 +1253,9 @@ export default function App() {
                     title="Classrooms" 
                     items={classrooms} 
                     type="classroom" 
-                    onAdd={(name) => addEntity('classrooms', name)}
+                    onAdd={(name, extra) => addEntity('classrooms', name, extra)}
                     onRemove={(id) => removeEntity('classrooms', id)}
+                    subjects={subjects}
                   />
                   <div className="border-t border-border-blue-gray my-4" />
                   <div className="pt-4 space-y-2">
@@ -1426,7 +1511,7 @@ const DroppableCellWrapper = ({ id, children }: { id: string, children: React.Re
   );
 };
 
-const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, professors, onRequestAddProfessor, classes }: { 
+const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, professors, onRequestAddProfessor, classes, subjects }: { 
   title: string, 
   items: any[], 
   type: string, 
@@ -1435,10 +1520,11 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
   onUpdate?: (type: string, id: number, data: any) => void,
   professors?: Professor[],
   onRequestAddProfessor?: (name: string) => void,
-  classes?: ClassWithBatches[]
+  classes?: ClassWithBatches[],
+  subjects?: Subject[]
 }) => {
-  const [step, setStep] = useState<'none' | 'subject' | 'mode' | 'professor' | 'classes_taught' | 'batch_selection' | 'weightage' | 'generic'>('none');
-  const [formData, setFormData] = useState({ name: '', professorId: '', weightage: 2, allowedClassIds: [] as number[], allowedBatchIds: [] as number[], mode: 'lecture' as 'lecture' | 'lab' });
+  const [step, setStep] = useState<'none' | 'subject' | 'mode' | 'professor' | 'classes_taught' | 'batch_selection' | 'weightage' | 'generic' | 'room_type' | 'subject_selection'>('none');
+  const [formData, setFormData] = useState({ name: '', professorId: '', weightage: 2, allowedClassIds: [] as number[], allowedBatchIds: [] as number[], mode: 'lecture' as 'lecture' | 'lab', roomType: undefined as 'lecture' | 'lab' | undefined, allowedSubjectIds: [] as number[] });
   const [newProfName, setNewProfName] = useState('');
 
   const handleAdd = () => {
@@ -1462,7 +1548,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
     <div className="sidebar-stack">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-semibold text-muted-steel uppercase tracking-widest">{title}</h3>
-        <button onClick={() => setStep(type === 'subject' ? 'subject' : 'generic')} className="p-1 hover:bg-slate-blue rounded transition-colors">
+        <button onClick={() => setStep(type === 'subject' ? 'subject' : type === 'classroom' ? 'room_type' : 'generic')} className="p-1 hover:bg-slate-blue rounded transition-colors">
           <Plus className="w-4 h-4" />
         </button>
       </div>
@@ -1683,7 +1769,131 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
         </div>
       )}
 
-      {step === 'generic' && (
+      {step !== 'none' && type === 'classroom' && (
+        <div className="p-3 bg-deep-navy rounded-md border border-border-blue-gray space-y-3 shadow-none animate-in fade-in slide-in-from-top-2 duration-200">
+          {step === 'room_type' && (
+            <div>
+              <label className="block text-[10px] font-bold uppercase mb-1 text-muted-steel">Room type</label>
+              <div className="flex gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, roomType: 'lecture' })}
+                  className={cn(
+                    "flex-1 py-2 text-xs rounded border",
+                    formData.roomType === 'lecture'
+                      ? "border-muted-teal bg-slate-blue text-white"
+                      : "border-border-blue-gray bg-midnight-blue text-muted-steel"
+                  )}
+                >
+                  Lecture room
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, roomType: 'lab' })}
+                  className={cn(
+                    "flex-1 py-2 text-xs rounded border",
+                    formData.roomType === 'lab'
+                      ? "border-muted-teal bg-slate-blue text-white"
+                      : "border-border-blue-gray bg-midnight-blue text-muted-steel"
+                  )}
+                >
+                  Lab room
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setStep('none')} className="flex-1 btn-outline py-1 text-xs">Cancel</button>
+                <button
+                  disabled={!formData.roomType}
+                  onClick={() => setStep('subject_selection')}
+                  className="flex-1 btn-teal py-1 text-xs"
+                >
+                  Next: Assign to subjects
+                </button>
+              </div>
+            </div>
+          )}
+          {step === 'subject_selection' && formData.roomType && (
+            <div>
+              <label className="block text-[10px] font-bold uppercase mb-1 text-muted-steel">
+                {formData.roomType === 'lecture' ? 'Lecture' : 'Lab'} subjects (optional)
+              </label>
+              <p className="text-[10px] text-muted-steel mb-2">This room will only be allotted to the selected subjects. Skip to allow all.</p>
+              <div className="max-h-40 overflow-y-auto space-y-1 mb-3 custom-scrollbar pr-1 border border-border-blue-gray rounded p-2 bg-midnight-blue">
+                {(subjects ?? []).filter(s => (s.mode ?? 'lecture') === formData.roomType).map(sub => (
+                  <label key={sub.id} className="flex items-center gap-2 p-1.5 hover:bg-slate-blue rounded cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={formData.allowedSubjectIds.includes(sub.id)}
+                      onChange={(e) => {
+                        const ids = e.target.checked
+                          ? [...formData.allowedSubjectIds, sub.id]
+                          : formData.allowedSubjectIds.filter(id => id !== sub.id);
+                        setFormData({ ...formData, allowedSubjectIds: ids });
+                      }}
+                      className="rounded border-border-blue-gray bg-deep-navy text-muted-teal focus:ring-muted-teal"
+                    />
+                    <span className="text-xs">{sub.name}</span>
+                  </label>
+                ))}
+                {(subjects ?? []).filter(s => (s.mode ?? 'lecture') === formData.roomType).length === 0 && (
+                  <span className="text-xs text-muted-steel">No {formData.roomType} subjects yet.</span>
+                )}
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={() => setStep('room_type')} className="flex-1 btn-outline py-1 text-xs">Back</button>
+                <button
+                  onClick={() => { setFormData({ ...formData, allowedSubjectIds: [] }); setStep('generic'); }}
+                  className="flex-1 btn-outline py-1 text-xs"
+                >
+                  Skip
+                </button>
+                <button
+                  onClick={() => setStep('generic')}
+                  className="flex-1 btn-teal py-1 text-xs"
+                >
+                  Done → Enter name
+                </button>
+              </div>
+            </div>
+          )}
+          {step === 'generic' && type === 'classroom' && (
+            <div>
+              <label className="block text-[10px] font-bold uppercase mb-1 text-muted-steel">Classroom name</label>
+              <input
+                autoFocus
+                className="w-full text-sm border border-border-blue-gray bg-midnight-blue text-white p-2 rounded-md focus:outline-none focus:ring-1 focus:ring-muted-teal mb-2"
+                placeholder="e.g. Room 101"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && formData.name.trim()) {
+                    onAdd(formData.name.trim(), { room_type: formData.roomType, allowed_subject_ids: formData.allowedSubjectIds.length ? formData.allowedSubjectIds : undefined });
+                    setFormData({ ...formData, name: '', roomType: undefined, allowedSubjectIds: [] });
+                    setStep('none');
+                  }
+                  if (e.key === 'Escape') setStep('subject_selection');
+                }}
+              />
+              <div className="flex gap-2">
+                <button onClick={() => setStep('subject_selection')} className="flex-1 btn-outline py-1 text-xs">Back</button>
+                <button
+                  disabled={!formData.name.trim()}
+                  onClick={() => {
+                    onAdd(formData.name.trim(), { room_type: formData.roomType, allowed_subject_ids: formData.allowedSubjectIds.length ? formData.allowedSubjectIds : undefined });
+                    setFormData({ ...formData, name: '', roomType: undefined, allowedSubjectIds: [] });
+                    setStep('none');
+                  }}
+                  className="flex-1 btn-teal py-1 text-xs"
+                >
+                  Add classroom
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {step === 'generic' && type !== 'classroom' && (
         <div className="animate-in fade-in slide-in-from-top-2 duration-200">
           <input 
             autoFocus

@@ -8,7 +8,7 @@ import {
   DragStartEvent, 
   DragEndEvent 
 } from '@dnd-kit/core';
-import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2, ChevronRight, ChevronLeft, ArrowLeft, Settings, UtensilsCrossed } from 'lucide-react';
+import { Plus, X, GripVertical, ChevronDown, AlertCircle, User as UserIcon, Trash2, ChevronRight, ChevronLeft, ArrowLeft, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './utils';
 import { 
@@ -245,11 +245,7 @@ export default function App() {
   const [attendanceTarget, setAttendanceTarget] = useState<TimetableEntry | null>(null);
   const [attendanceMarks, setAttendanceMarks] = useState<Record<string, boolean>>({}); // true means absent
   const [attendanceRecords, setAttendanceRecords] = useState<Record<string, Record<string, boolean>>>({});
-  const [attendanceHistory, setAttendanceHistory] = useState<Array<{
-    weekStart: string;
-    generatedAt: string;
-    daywise: Array<{ day: string; totalSessions: number; totalAbsentees: number }>;
-  }>>([]);
+  const [autoCreateErrors, setAutoCreateErrors] = useState<string[]>([]);
   const [mondayDate, setMondayDate] = useState<string>(() => {
     const today = new Date();
     const day = today.getDay();
@@ -359,7 +355,6 @@ export default function App() {
       if (!raw) return;
       const parsed = JSON.parse(raw) as any;
       setAttendanceRecords(parsed?.attendanceRecords && typeof parsed.attendanceRecords === 'object' ? parsed.attendanceRecords : {});
-      setAttendanceHistory(Array.isArray(parsed?.attendanceHistory) ? parsed.attendanceHistory : []);
     } catch {
       // Ignore corrupted local storage
     }
@@ -370,12 +365,11 @@ export default function App() {
     try {
       window.localStorage.setItem(LOCAL_ATTENDANCE_KEY, JSON.stringify({
         attendanceRecords,
-        attendanceHistory,
       }));
     } catch {
       // Ignore quota / storage errors
     }
-  }, [attendanceRecords, attendanceHistory]);
+  }, [attendanceRecords]);
 
   useEffect(() => {
     if (selectedYear) {
@@ -843,6 +837,7 @@ export default function App() {
     const newEntries: TimetableEntry[] = [];
     const profSchedule: Record<string, boolean> = {}; // "day:slot:profId"
     const roomSchedule: Record<string, boolean> = {}; // "day:slot:roomId"
+    const autoErrors: string[] = [];
     const MAX_HOURS_PER_DAY = 2;
 
     // For each class and its batches
@@ -927,6 +922,9 @@ export default function App() {
                 attempts++;
               }
             }
+            if (!found) {
+              autoErrors.push(`${cls.name}: could not place lecture ${sub.name} (${h + 1}/${sub.weightage}).`);
+            }
           }
         } else {
           // Lab: allocate hours batch-wise; use batch criteria (allowed_batch_ids)
@@ -988,17 +986,15 @@ export default function App() {
                   attempts++;
                 }
               }
+              if (!found) {
+                autoErrors.push(`${cls.name} ${batch.name}: could not place lab ${sub.name} (${h + 1}/${sub.weightage}).`);
+              }
             }
           }
         }
       }
     }
 
-    setTimetable(newEntries);
-  };
-
-  const allotLunch = () => {
-    if (!user || classes.length === 0) return;
     let lunchProfessor = professors.find(p => p.name === 'Lunch' && p.color === LUNCH_COLOR);
     if (!lunchProfessor) {
       lunchProfessor = { id: professorIdCounter++, name: 'Lunch', color: LUNCH_COLOR };
@@ -1009,22 +1005,32 @@ export default function App() {
       lunchSubject = { id: subjectIdCounter++, name: 'Lunch', weightage: 0, mode: 'lecture' as const };
       setSubjects(prev => [...prev, lunchSubject!]);
     }
-    const existingKeys = new Set(
-      timetable.map(e => `${e.day}:${e.time_slot}:${e.class_id}:${e.batch_id}`)
-    );
-    const newEntries: TimetableEntry[] = [];
+
+    const occupied = new Set(newEntries.map(e => `${e.day}:${e.time_slot}:${e.class_id}:${e.batch_id}`));
     for (let classIdx = 0; classIdx < classes.length; classIdx++) {
       const cls = classes[classIdx]!;
       for (let day = 0; day < 5; day++) {
-        const slot = (classIdx + day) % 2 === 0 ? LUNCH_SLOT_12_1 : LUNCH_SLOT_1_2;
+        const preferred = (classIdx + day) % 2 === 0 ? LUNCH_SLOT_12_1 : LUNCH_SLOT_1_2;
+        const alternate = preferred === LUNCH_SLOT_12_1 ? LUNCH_SLOT_1_2 : LUNCH_SLOT_12_1;
+        const candidates = [preferred, alternate];
+        let selectedSlot: number | null = null;
+        for (const slot of candidates) {
+          const freeForAllBatches = cls.batches.every(batch => !occupied.has(`${day}:${slot}:${cls.id}:${batch.id}`));
+          if (freeForAllBatches) {
+            selectedSlot = slot;
+            break;
+          }
+        }
+        if (selectedSlot == null) {
+          autoErrors.push(`${cls.name}: could not place Lunch on ${DAYS[day]}.`);
+          continue;
+        }
         for (const batch of cls.batches) {
-          const key = `${day}:${slot}:${cls.id}:${batch.id}`;
-          if (existingKeys.has(key)) continue;
-          existingKeys.add(key);
+          occupied.add(`${day}:${selectedSlot}:${cls.id}:${batch.id}`);
           newEntries.push({
             id: timetableEntryIdCounter++,
             day,
-            time_slot: slot,
+            time_slot: selectedSlot,
             class_id: cls.id,
             batch_id: batch.id,
             subject_id: lunchSubject!.id,
@@ -1035,7 +1041,9 @@ export default function App() {
         }
       }
     }
-    setTimetable(prev => [...prev, ...newEntries]);
+
+    setTimetable(newEntries);
+    setAutoCreateErrors(autoErrors);
   };
 
   const parseRollRangeInput = (value: string) => {
@@ -1094,42 +1102,52 @@ export default function App() {
     setAttendanceTarget(null);
   };
 
-  const buildCurrentWeekSummary = (weekStart: string = mondayDate) => {
-    const dayStats = DAYS.map((day) => ({ day, totalSessions: 0, totalAbsentees: 0 }));
+  const selectedMonthKey = mondayDate.slice(0, 7); // YYYY-MM
+  const monthlyLectureDefaulters = React.useMemo(() => {
+    const absentsByClassRoll: Record<number, Record<string, number>> = {};
+    const monthlyLectureSessionsByClass: Record<number, number> = {};
+
     for (const [key, marks] of Object.entries(attendanceRecords)) {
       const parts = key.split(':');
-      if (parts[0] !== weekStart) continue;
-      const dayIdx = Number(parts[1]);
-      if (!Number.isInteger(dayIdx) || dayIdx < 0 || dayIdx >= DAYS.length) continue;
-      dayStats[dayIdx]!.totalSessions += 1;
-      dayStats[dayIdx]!.totalAbsentees += Object.keys(marks).length;
+      if (parts.length < 5) continue;
+      const weekStart = parts[0]!;
+      const classId = Number(parts[3]);
+      const scope = parts[parts.length - 1];
+      if (!weekStart.startsWith(selectedMonthKey)) continue;
+      if (scope !== 'lecture') continue;
+      if (!Number.isInteger(classId)) continue;
+
+      monthlyLectureSessionsByClass[classId] = (monthlyLectureSessionsByClass[classId] ?? 0) + 1;
+      const absentRolls = Object.keys(marks);
+      if (!absentsByClassRoll[classId]) absentsByClassRoll[classId] = {};
+      for (const roll of absentRolls) {
+        absentsByClassRoll[classId]![roll] = (absentsByClassRoll[classId]![roll] ?? 0) + 1;
+      }
     }
-    return {
-      weekStart,
-      generatedAt: new Date().toISOString(),
-      daywise: dayStats,
-    };
-  };
 
-  const finalizeWeekAttendance = () => {
-    const summary = buildCurrentWeekSummary();
-    setAttendanceHistory((prev) => {
-      const withoutCurrentWeek = prev.filter((x) => x.weekStart !== mondayDate);
-      return [summary, ...withoutCurrentWeek].slice(0, 24);
-    });
-  };
+    return classes.map((cls) => {
+      const classId = cls.id;
+      const totalLectures = monthlyLectureSessionsByClass[classId] ?? 0;
+      const rolls = rollNumbersByClass[classId] ?? [];
 
-  const previousMondayRef = useRef(mondayDate);
-  useEffect(() => {
-    const previousWeek = previousMondayRef.current;
-    if (previousWeek === mondayDate) return;
-    const summary = buildCurrentWeekSummary(previousWeek);
-    setAttendanceHistory((prev) => {
-      const withoutPreviousWeek = prev.filter((x) => x.weekStart !== previousWeek);
-      return [summary, ...withoutPreviousWeek].slice(0, 24);
+      const lowAttendanceRolls = rolls
+        .map((roll) => {
+          const absent = absentsByClassRoll[classId]?.[roll] ?? 0;
+          const present = Math.max(0, totalLectures - absent);
+          const pct = totalLectures > 0 ? (present / totalLectures) * 100 : 100;
+          return { roll, pct, present, total: totalLectures };
+        })
+        .filter((r) => r.pct < 75)
+        .sort((a, b) => a.pct - b.pct);
+
+      return {
+        classId,
+        className: cls.name,
+        totalLectures,
+        lowAttendanceRolls,
+      };
     });
-    previousMondayRef.current = mondayDate;
-  }, [mondayDate, attendanceRecords]);
+  }, [attendanceRecords, classes, rollNumbersByClass, selectedMonthKey]);
 
   if (!inchargeAuthenticated) {
     return (
@@ -1245,26 +1263,29 @@ export default function App() {
                 Attendance <ChevronDown className="w-4 h-4" />
               </button>
               <div className="absolute top-full left-0 mt-1 bg-midnight-blue border border-border-blue-gray shadow-none rounded-md py-2 w-72 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-40">
-                <button
-                  onClick={finalizeWeekAttendance}
-                  className="w-full text-left px-4 py-2 text-sm text-muted-teal hover:bg-slate-blue"
-                >
-                  Compile & Save Current Week
-                </button>
-                <div className="border-t border-border-blue-gray mt-2 pt-2 max-h-56 overflow-y-auto custom-scrollbar">
-                  {attendanceHistory.length === 0 && (
-                    <div className="px-4 py-2 text-xs text-muted-steel">No saved weekly attendance yet.</div>
+                <div className="px-4 py-1 text-xs text-muted-teal font-semibold">
+                  Monthly Lecture Attendance ({selectedMonthKey})
+                </div>
+                <div className="border-t border-border-blue-gray mt-1 pt-2 max-h-64 overflow-y-auto custom-scrollbar">
+                  {monthlyLectureDefaulters.every((c) => c.lowAttendanceRolls.length === 0) && (
+                    <div className="px-4 py-2 text-xs text-muted-steel">No students below 75% lecture attendance this month.</div>
                   )}
-                  {attendanceHistory.map((week) => (
-                    <div key={`${week.weekStart}-${week.generatedAt}`} className="px-4 py-2 border-b border-border-blue-gray/40 last:border-b-0">
-                      <div className="text-xs text-muted-teal font-semibold">Week of {week.weekStart}</div>
-                      <div className="mt-1 space-y-0.5">
-                        {week.daywise.map((d) => (
-                          <div key={`${week.weekStart}-${d.day}`} className="text-[10px] text-muted-steel">
-                            {d.day}: {d.totalAbsentees} absent / {d.totalSessions} sessions
-                          </div>
-                        ))}
+                  {monthlyLectureDefaulters.map((c) => (
+                    <div key={c.classId} className="px-4 py-2 border-b border-border-blue-gray/40 last:border-b-0">
+                      <div className="text-xs text-muted-teal font-semibold">
+                        {c.className} ({c.totalLectures} lectures)
                       </div>
+                      {c.lowAttendanceRolls.length === 0 ? (
+                        <div className="text-[10px] text-muted-steel mt-1">No defaulters</div>
+                      ) : (
+                        <div className="mt-1 space-y-0.5">
+                          {c.lowAttendanceRolls.map((r) => (
+                            <div key={`${c.classId}-${r.roll}`} className="text-[10px] text-muted-steel">
+                              {r.roll}: {r.pct.toFixed(1)}% ({r.present}/{r.total})
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1456,13 +1477,16 @@ export default function App() {
                   >
                     AUTO-CREATE TIMETABLE
                   </button>
-                  <button 
-                    onClick={allotLunch}
-                    className="w-full btn-outline py-3 flex items-center justify-center gap-2"
-                  >
-                    <UtensilsCrossed className="w-4 h-4" />
-                    ALLOT LUNCH
-                  </button>
+                  {autoCreateErrors.length > 0 && (
+                    <div className="max-h-40 overflow-y-auto border border-border-blue-gray rounded-md p-2 bg-deep-navy/40 space-y-1 custom-scrollbar">
+                      <div className="text-[10px] uppercase tracking-widest text-red-300">Auto-create issues</div>
+                      {autoCreateErrors.map((err, idx) => (
+                        <div key={`${idx}-${err}`} className="text-[10px] text-muted-steel">
+                          {err}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex-1">

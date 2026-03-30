@@ -1067,6 +1067,20 @@ export default function App() {
     return Array.from(new Set(out));
   };
 
+  const partitionRollsForBatches = (rolls: string[], batchCount: number) => {
+    if (batchCount <= 0) return [];
+    const base = Math.floor(rolls.length / batchCount);
+    const remainder = rolls.length % batchCount;
+    const chunks: string[][] = [];
+    let cursor = 0;
+    for (let i = 0; i < batchCount; i++) {
+      const size = base + (i < remainder ? 1 : 0);
+      chunks.push(rolls.slice(cursor, cursor + size));
+      cursor += size;
+    }
+    return chunks;
+  };
+
   const getAttendanceContext = (entry: TimetableEntry) => {
     const subject = subjects.find((s) => s.id === entry.subject_id);
     const mode = subject?.mode ?? 'lecture';
@@ -1642,38 +1656,30 @@ export default function App() {
                         if (!canEdit) return;
                         const cls = classes.find((c) => c.id === classId);
                         const generated = parseRollRangeInput(range);
+                        const partitions = cls ? partitionRollsForBatches(generated, cls.batches.length) : [];
                         setRollRangeByClass((prev) => ({ ...prev, [classId]: range }));
                         setRollNumbersByClass((prev) => ({ ...prev, [classId]: generated }));
                         if (cls) {
                           setRollRangeByBatch((prev) => {
                             const next = { ...prev };
-                            for (const batch of cls.batches) next[batch.id] = range;
+                            for (let i = 0; i < cls.batches.length; i++) {
+                              const batch = cls.batches[i]!;
+                              const chunk = partitions[i] ?? [];
+                              const first = chunk[0];
+                              const last = chunk[chunk.length - 1];
+                              next[batch.id] = chunk.length ? `${first}-${last}` : '';
+                            }
                             return next;
                           });
                           setRollNumbersByBatch((prev) => {
                             const next = { ...prev };
-                            for (const batch of cls.batches) next[batch.id] = generated;
+                            for (let i = 0; i < cls.batches.length; i++) {
+                              const batch = cls.batches[i]!;
+                              next[batch.id] = partitions[i] ?? [];
+                            }
                             return next;
                           });
                         }
-                      }}
-                      onUpdateBatchRange={(batchId, range) => {
-                        if (!canEdit) return;
-                        const ownerClass = classes.find((c) => c.batches.some((b) => b.id === batchId));
-                        if (!ownerClass) return;
-                        const generated = parseRollRangeInput(range);
-                        setRollRangeByClass((prev) => ({ ...prev, [ownerClass.id]: range }));
-                        setRollNumbersByClass((prev) => ({ ...prev, [ownerClass.id]: generated }));
-                        setRollRangeByBatch((prev) => {
-                          const next = { ...prev };
-                          for (const batch of ownerClass.batches) next[batch.id] = range;
-                          return next;
-                        });
-                        setRollNumbersByBatch((prev) => {
-                          const next = { ...prev };
-                          for (const batch of ownerClass.batches) next[batch.id] = generated;
-                          return next;
-                        });
                       }}
                     />
                   </div>
@@ -2421,7 +2427,6 @@ const RollNumberManager = ({
   rollNumbersByBatch,
   disabled,
   onUpdateClassRange,
-  onUpdateBatchRange,
 }: {
   classes: ClassWithBatches[];
   rollRangeByClass: Record<number, string>;
@@ -2430,7 +2435,6 @@ const RollNumberManager = ({
   rollNumbersByBatch: Record<number, string[]>;
   disabled?: boolean;
   onUpdateClassRange: (classId: number, value: string) => void;
-  onUpdateBatchRange: (batchId: number, value: string) => void;
 }) => {
   return (
     <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
@@ -2451,13 +2455,9 @@ const RollNumberManager = ({
             {cls.batches.map((batch) => (
               <div key={`batch-edit-${batch.id}`} className="space-y-1">
                 <label className="text-[10px] text-muted-steel">{batch.name}</label>
-                <input
-                  value={rollRangeByBatch[batch.id] ?? rollRangeByClass[cls.id] ?? ''}
-                  onChange={(e) => onUpdateBatchRange(batch.id, e.target.value)}
-                  disabled={disabled}
-                  className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1 rounded"
-                  placeholder="1-60"
-                />
+                <div className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1 rounded min-h-[24px]">
+                  {rollRangeByBatch[batch.id] ?? '-'}
+                </div>
                 <div className="text-[10px] text-muted-steel text-center">{(rollNumbersByBatch[batch.id] ?? rollNumbersByClass[cls.id] ?? []).length}</div>
               </div>
             ))}

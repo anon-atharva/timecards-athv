@@ -416,7 +416,15 @@ export default function App() {
     format: 'timecards-stacks';
     version: 1;
     professors: Array<{ name: string; color?: string }>;
-    subjects: Array<{ name: string; weightage?: number; professor?: string; allowedClasses?: string[]; allowedBatches?: string[]; mode?: 'lecture' | 'lab' }>;
+    subjects: Array<{ 
+      name: string; 
+      weightage?: number; 
+      professor?: string; 
+      allowedClasses?: string[]; 
+      allowedBatches?: string[]; 
+      mode?: 'lecture' | 'lab';
+      consecutiveLectureBlocks?: boolean;
+    }>;
     classrooms: Array<{ name: string; roomType?: 'lecture' | 'lab'; allowedSubjects?: string[] }>;
     rollNumbers?: {
       classes: Array<{ className: string; rollNumbers: string[] }>;
@@ -451,6 +459,7 @@ export default function App() {
           .filter((x): x is string => typeof x === 'string'),
         allowedBatches: (s.allowed_batch_ids ?? []).map(id => batchNameById.get(id)).filter((x): x is string => typeof x === 'string'),
         mode: s.mode,
+        consecutiveLectureBlocks: !!s.consecutive_lecture_blocks,
       })),
       classrooms: classrooms.map(c => ({
         name: c.name,
@@ -546,6 +555,8 @@ export default function App() {
         .map((n: any) => (typeof n === 'string' ? batchIdByName.get(n.trim()) : undefined))
         .filter((x): x is number => typeof x === 'number');
       const mode = s?.mode === 'lab' || s?.mode === 'lecture' ? s.mode : undefined;
+      const consecutiveLectureBlocks =
+        !!s?.consecutiveLectureBlocks || !!s?.consecutive_lecture_blocks;
 
       nextSubjects.push({
         id: subjectIdCounter++,
@@ -555,6 +566,7 @@ export default function App() {
         allowed_class_ids: Array.from(new Set(allowed_class_ids)),
         allowed_batch_ids: Array.from(new Set(allowed_batch_ids)),
         mode,
+        consecutive_lecture_blocks: consecutiveLectureBlocks || undefined,
       });
     }
     const subjectIdByName = new Map<string, number>(nextSubjects.map(s => [s.name, s.id]));
@@ -631,6 +643,7 @@ export default function App() {
         professor_id: extra?.professor_id,
         allowed_class_ids: extra?.allowed_class_ids ?? [],
         allowed_batch_ids: extra?.allowed_batch_ids ?? [],
+        consecutive_lecture_blocks: extra?.consecutive_lecture_blocks,
       };
       setSubjects(prev => [...prev, newSubject]);
     }
@@ -946,6 +959,7 @@ export default function App() {
         const mode = sub.mode ?? 'lecture';
 
         if (mode === 'lecture') {
+          const consecutive2hr = !!(sub as any).consecutive_lecture_blocks;
           for (let h = 0; h < sub.weightage; h++) {
             if (classSlots.length === 0) break;
             let found = false;
@@ -954,6 +968,74 @@ export default function App() {
             while (!found && attempts < classSlots.length) {
               const { day, slot } = classSlots[0];
               const subjectDayCount = lectureHoursPerSubjectPerDay[lectureKey(sub.id, day)] ?? 0;
+
+              // If enabled, try to place this subject as a consecutive 2-hour lecture block.
+              if (consecutive2hr && h + 1 < sub.weightage && subjectDayCount === 0 && slot <= 6) {
+                const hasNextSlot = classSlots.some((x) => x.day === day && x.slot === slot + 1);
+                if (hasNextSlot) {
+                  const profId = sub.professor_id || (professors[Math.floor(Math.random() * professors.length)]?.id);
+                  const lectureRooms = classrooms.filter(r => r.room_type !== 'lab');
+                  const eligibleRooms = lectureRooms.filter(r =>
+                    !r.allowed_subject_ids?.length || r.allowed_subject_ids.includes(sub.id)
+                  );
+                  const pool = eligibleRooms.length ? eligibleRooms : lectureRooms;
+                  const room1 = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
+                  const room2 = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
+
+                  const profKey1 = `${day}:${slot}:${profId}`;
+                  const profKey2 = `${day}:${slot + 1}:${profId}`;
+                  const roomKey1 = `${day}:${slot}:${room1?.id}`;
+                  const roomKey2 = `${day}:${slot + 1}:${room2?.id}`;
+
+                  const profBusyPair = !!(profId && (profSchedule[profKey1] || profSchedule[profKey2]));
+                  const roomBusyPair = !!(room1 && roomSchedule[roomKey1]) || !!(room2 && roomSchedule[roomKey2]);
+
+                  if (!profBusyPair && !roomBusyPair) {
+                    for (const batch of cls.batches) {
+                      newEntries.push({
+                        id: timetableEntryIdCounter++,
+                        day,
+                        time_slot: slot,
+                        class_id: cls.id,
+                        batch_id: batch.id,
+                        subject_id: sub.id,
+                        professor_id: profId || null,
+                        classroom_id: room1?.id || null,
+                        exception_flag: false,
+                      });
+                      newEntries.push({
+                        id: timetableEntryIdCounter++,
+                        day,
+                        time_slot: slot + 1,
+                        class_id: cls.id,
+                        batch_id: batch.id,
+                        subject_id: sub.id,
+                        professor_id: profId || null,
+                        classroom_id: room2?.id || null,
+                        exception_flag: false,
+                      });
+                      occupied.add(`${day}:${slot}:${cls.id}:${batch.id}`);
+                      occupied.add(`${day}:${slot + 1}:${cls.id}:${batch.id}`);
+                    }
+
+                    lectureHoursPerSubjectPerDay[lectureKey(sub.id, day)] = subjectDayCount + 2;
+                    if (profId) {
+                      profSchedule[profKey1] = true;
+                      profSchedule[profKey2] = true;
+                    }
+                    if (room1) roomSchedule[roomKey1] = true;
+                    if (room2) roomSchedule[roomKey2] = true;
+
+                    // Remove both slots from availability for this class.
+                    classSlots = classSlots.filter((x) => !(x.day === day && (x.slot === slot || x.slot === slot + 1)));
+
+                    found = true;
+                    h++; // consume the next hour as part of the same 2-hour block
+                    break;
+                  }
+                }
+              }
+
               if (subjectDayCount >= MAX_HOURS_PER_DAY) {
                 classSlots.push(classSlots.shift()!);
                 attempts++;
@@ -1658,6 +1740,7 @@ export default function App() {
                     professors={professors}
                     onRequestAddProfessor={requestAddProfessor}
                     classes={classes}
+                    subjects={subjects}
                     disabled={!canEdit}
                   />
                   <div className="border-t border-border-blue-gray my-8" />
@@ -2050,7 +2133,17 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
   disabled?: boolean
 }) => {
   const [step, setStep] = useState<'none' | 'subject' | 'mode' | 'professor' | 'classes_taught' | 'batch_selection' | 'weightage' | 'generic' | 'room_type' | 'subject_selection'>('none');
-  const [formData, setFormData] = useState({ name: '', professorId: '', weightage: 2, allowedClassIds: [] as number[], allowedBatchIds: [] as number[], mode: 'lecture' as 'lecture' | 'lab', roomType: undefined as 'lecture' | 'lab' | undefined, allowedSubjectIds: [] as number[] });
+  const [formData, setFormData] = useState({ 
+    name: '', 
+    professorId: '', 
+    weightage: 2, 
+    allowedClassIds: [] as number[], 
+    allowedBatchIds: [] as number[], 
+    mode: 'lecture' as 'lecture' | 'lab', 
+    roomType: undefined as 'lecture' | 'lab' | undefined, 
+    allowedSubjectIds: [] as number[], 
+    consecutiveLectureBlocks: false,
+  });
   const [newProfName, setNewProfName] = useState('');
 
   const handleAdd = () => {
@@ -2060,9 +2153,20 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
       allowed_class_ids: formData.allowedClassIds,
       allowed_batch_ids: formData.allowedBatchIds,
       mode: formData.mode,
+      consecutive_lecture_blocks: formData.consecutiveLectureBlocks,
     });
     setStep('none');
-    setFormData({ name: '', professorId: '', weightage: 2, allowedClassIds: [], allowedBatchIds: [], mode: 'lecture' });
+    setFormData({ 
+      name: '', 
+      professorId: '', 
+      weightage: 2, 
+      allowedClassIds: [], 
+      allowedBatchIds: [], 
+      mode: 'lecture', 
+      roomType: undefined,
+      allowedSubjectIds: [], 
+      consecutiveLectureBlocks: false,
+    });
   };
 
   const allBatchesOrdered = React.useMemo(() => {
@@ -2192,7 +2296,34 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
                 <button onClick={() => setStep('subject')} className="flex-1 btn-outline py-1 text-xs">Back</button>
                 <button 
                   disabled={!formData.professorId}
-                  onClick={() => setStep(formData.mode === 'lecture' ? 'classes_taught' : 'batch_selection')}
+                  onClick={() => {
+                    if (formData.mode === 'lab') {
+                      const profId = parseInt(formData.professorId);
+                      if (!Number.isNaN(profId)) {
+                        const lectureClassIds = Array.from(new Set(
+                          (subjects ?? [])
+                            .filter((s) => (s.mode ?? 'lecture') === 'lecture' && s.professor_id === profId)
+                            .flatMap((s) => s.allowed_class_ids ?? [])
+                        ));
+
+                        const derivedBatchIds = lectureClassIds.length && classes
+                          ? Array.from(
+                              new Set(
+                                classes.flatMap((cls) =>
+                                  lectureClassIds.includes(cls.id) ? cls.batches.map((b) => b.id) : []
+                                )
+                              )
+                            )
+                          : [];
+
+                        setFormData((prev) => ({
+                          ...prev,
+                          allowedBatchIds: derivedBatchIds,
+                        }));
+                      }
+                    }
+                    setStep(formData.mode === 'lecture' ? 'classes_taught' : 'batch_selection');
+                  }}
                   className="flex-1 btn-teal py-1 text-xs"
                 >
                   {formData.mode === 'lecture' ? 'Next: Classes Taught' : 'Next: Batches'}
@@ -2287,6 +2418,17 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
                   +
                 </button>
               </div>
+              {formData.mode === 'lecture' && (
+                <label className="flex items-center justify-between gap-3 text-[10px] text-muted-steel mb-3">
+                  <span className="uppercase tracking-widest">Consecutive 2-hr lecture blocks</span>
+                  <input
+                    type="checkbox"
+                    checked={formData.consecutiveLectureBlocks}
+                    onChange={(e) => setFormData({ ...formData, consecutiveLectureBlocks: e.target.checked })}
+                    className="rounded border-border-blue-gray bg-deep-navy text-muted-teal focus:ring-muted-teal"
+                  />
+                </label>
+              )}
               <div className="flex gap-2">
                 <button onClick={() => setStep(formData.mode === 'lecture' ? 'classes_taught' : 'batch_selection')} className="flex-1 btn-outline py-1 text-xs">Back</button>
                 <button onClick={handleAdd} className="flex-1 btn-teal py-1 text-xs">Finish</button>

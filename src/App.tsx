@@ -1107,6 +1107,19 @@ export default function App() {
 
   const selectedMonthKey = mondayDate.slice(0, 7); // YYYY-MM
   const canEdit = userRole === 'incharge';
+  const canNavigateSchedule = !!userRole;
+
+  const logout = () => {
+    setUserRole(null);
+    setLoginStep('choose');
+    setInchargePassword('');
+    setInchargeError('');
+    setProfessorPassword('');
+    setProfessorError('');
+    setAttendanceTarget(null);
+    setConflict(null);
+    setIsProfessorModalOpen(false);
+  };
   const monthlyLectureDefaulters = React.useMemo(() => {
     const absentsByClassRoll: Record<number, Record<string, number>> = {};
     const monthlyLectureSessionsByClass: Record<number, number> = {};
@@ -1459,10 +1472,18 @@ export default function App() {
               <input 
                 type="date" 
                 value={mondayDate}
-                onChange={(e) => setMondayDate(e.target.value)}
+                disabled={!canNavigateSchedule}
+                onChange={(e) => canNavigateSchedule && setMondayDate(e.target.value)}
                 className="bg-deep-navy border border-border-blue-gray text-[10px] text-white p-1 rounded focus:outline-none focus:ring-1 focus:ring-muted-teal"
               />
             </div>
+            <button
+              type="button"
+              onClick={logout}
+              className="text-[10px] uppercase tracking-widest text-muted-steel hover:text-muted-teal border border-border-blue-gray rounded px-2 py-1 transition-colors"
+            >
+              Logout
+            </button>
           </div>
         </header>
 
@@ -1475,11 +1496,11 @@ export default function App() {
                 {DAYS.map((day, idx) => (
                   <button
                     key={day}
-                    disabled={!canEdit}
-                    onClick={() => canEdit && setActiveDay(idx)}
+                    disabled={!canNavigateSchedule}
+                    onClick={() => canNavigateSchedule && setActiveDay(idx)}
                     className={cn(
                       "px-6 py-2 text-sm font-medium rounded-t-md transition-all border-b-2",
-                      !canEdit && "opacity-40 cursor-not-allowed",
+                      !canNavigateSchedule && "opacity-40 cursor-not-allowed",
                       activeDay === idx 
                         ? "bg-midnight-blue border-muted-teal text-muted-teal shadow-none" 
                         : "text-muted-steel border-transparent hover:bg-midnight-blue/50"

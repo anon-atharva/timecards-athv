@@ -3,7 +3,6 @@ import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import session from "express-session";
 import path from "path";
-import crypto from "crypto";
 
 const db = new Database("timecards.db");
 
@@ -104,15 +103,6 @@ if (userCount.count === 0) {
 async function startServer() {
   const app = express();
   const PORT = 3000;
-  const SESSION_SECRET = process.env.TIMECARDS_SESSION_SECRET || "timecards-secret-key";
-  const INCHARGE_PASSWORD = process.env.TIMECARDS_INCHARGE_PASSWORD || "timecardsadmin";
-  const PROFESSOR_PASSWORD = process.env.TIMECARDS_PROFESSOR_PASSWORD || "timecardsprof";
-
-  const secureEquals = (a: string, b: string) => {
-    const ah = crypto.createHash("sha256").update(a).digest();
-    const bh = crypto.createHash("sha256").update(b).digest();
-    return crypto.timingSafeEqual(ah, bh);
-  };
 
   app.use(express.json());
   
@@ -134,7 +124,7 @@ async function startServer() {
   }
 
   app.use(session({
-    secret: SESSION_SECRET,
+    secret: "timecards-secret-key",
     resave: false,
     saveUninitialized: false,
     cookie: { 
@@ -170,23 +160,6 @@ async function startServer() {
     } else {
       res.json({ user: null });
     }
-  });
-
-  app.post("/api/auth/role-login", (req, res) => {
-    const role = typeof req.body?.role === "string" ? req.body.role.trim() : "";
-    const password = typeof req.body?.password === "string" ? req.body.password : "";
-
-    if (role !== "incharge" && role !== "professor") {
-      return res.status(400).json({ success: false, message: "Invalid role" });
-    }
-
-    const expected = role === "incharge" ? INCHARGE_PASSWORD : PROFESSOR_PASSWORD;
-    if (!secureEquals(password, expected)) {
-      return res.status(401).json({ success: false, message: "Invalid password" });
-    }
-
-    (req.session as any).authRole = role;
-    res.json({ success: true, role });
   });
 
   // Entities API

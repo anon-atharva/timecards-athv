@@ -130,7 +130,7 @@ const DroppableCell = ({
   entry, 
   onClear,
   onOpenAttendance,
-  attendanceOnClick,
+  readOnly,
   professors,
   subjects,
   classrooms
@@ -142,7 +142,7 @@ const DroppableCell = ({
   entry?: TimetableEntry,
   onClear: () => void,
   onOpenAttendance?: () => void,
-  attendanceOnClick?: boolean,
+  readOnly?: boolean,
   professors: Professor[],
   subjects: Subject[],
   classrooms: Classroom[]
@@ -175,19 +175,14 @@ const DroppableCell = ({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
             ref={setNodeRef}
-            {...(!attendanceOnClick ? attributes : {})}
-            {...(!attendanceOnClick ? listeners : {})}
+            {...(!readOnly ? attributes : {})}
+            {...(!readOnly ? listeners : {})}
             className={cn(
               "relative flex items-center gap-2 w-full h-full rounded-md px-3 overflow-hidden group shadow-sm",
-              attendanceOnClick ? "cursor-pointer" : "cursor-move",
+              readOnly ? "cursor-pointer" : "cursor-move",
               isDragging && "opacity-40"
             )}
             style={cardStyle}
-            onClick={(e) => {
-              if (!attendanceOnClick) return;
-              e.stopPropagation();
-              onOpenAttendance?.();
-            }}
             onDoubleClick={(e) => {
               e.stopPropagation();
               onOpenAttendance?.();
@@ -204,7 +199,7 @@ const DroppableCell = ({
                 {classroom?.name || '---'}
               </span>
             </div>
-            {!attendanceOnClick && <button 
+            {!readOnly && <button 
               onClick={(e) => {
                 e.stopPropagation();
                 onClear();
@@ -272,11 +267,11 @@ export default function App() {
   });
 
   const [loginStep, setLoginStep] = useState<'choose' | 'incharge_password' | 'professor_password' | 'under_construction'>('choose');
-  const [inchargeAuthenticated, setInchargeAuthenticated] = useState(false);
-  const [accessRole, setAccessRole] = useState<'incharge' | 'professor' | null>(null);
+  const [userRole, setUserRole] = useState<'incharge' | 'professor' | null>(null);
   const [inchargePassword, setInchargePassword] = useState('');
-  const [professorPassword, setProfessorPassword] = useState('');
   const [inchargeError, setInchargeError] = useState('');
+  const [professorPassword, setProfessorPassword] = useState('');
+  const [professorError, setProfessorError] = useState('');
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     if (typeof window === 'undefined') return 'dark';
     return window.localStorage.getItem('timecards.theme') === 'light' ? 'light' : 'dark';
@@ -289,28 +284,6 @@ export default function App() {
   };
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const canEdit = accessRole === 'incharge';
-  const isProfessorMode = accessRole === 'professor';
-
-  const submitRoleLogin = async (role: 'incharge' | 'professor', password: string) => {
-    try {
-      const res = await fetch('/api/auth/role-login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role, password }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data?.success) {
-        setInchargeError(data?.message || 'Invalid password');
-        return;
-      }
-      setAccessRole(role);
-      setInchargeAuthenticated(true);
-      setInchargeError('');
-    } catch {
-      setInchargeError('Login failed. Please try again.');
-    }
-  };
   const LOCAL_STACKS_KEY = 'timecards.stacks.local.v1';
   const LOCAL_ATTENDANCE_KEY = 'timecards.attendance.local.v1';
 
@@ -706,9 +679,10 @@ export default function App() {
   };
 
   const onDragEnd = async (event: DragEndEvent) => {
+    if (!canEdit) return;
     const { over, active } = event;
     setActiveDrag(null);
-    if (!over || !user || !canEdit) return;
+    if (!over || !user) return;
 
     const [type, ...activeParts] = (active.id as string).split(':');
     const [targetType, day, slot, classId, batchId] = (over.id as string).split(':');
@@ -761,7 +735,6 @@ export default function App() {
   };
 
   const saveEntry = (entry: any) => {
-    if (!canEdit) return;
     if (entry.professor_id && !entry.exception_flag) {
       const conflicting = timetable.find(t =>
         t.day === entry.day &&
@@ -837,7 +810,6 @@ export default function App() {
   };
 
   const moveEntry = (entryId: number, day: number, slot: number, classId: number, batchId: number) => {
-    if (!canEdit) return;
     const existing = timetable.find(t => t.id === entryId);
     if (!existing) return;
 
@@ -1134,6 +1106,7 @@ export default function App() {
   };
 
   const selectedMonthKey = mondayDate.slice(0, 7); // YYYY-MM
+  const canEdit = userRole === 'incharge';
   const monthlyLectureDefaulters = React.useMemo(() => {
     const absentsByClassRoll: Record<number, Record<string, number>> = {};
     const monthlyLectureSessionsByClass: Record<number, number> = {};
@@ -1193,7 +1166,7 @@ export default function App() {
   const monthlyAttendanceToShow = monthlyAttendanceSnapshots[selectedMonthKey]?.classes ?? monthlyLectureDefaulters;
   const monthlyAttendanceUpdatedAt = monthlyAttendanceSnapshots[selectedMonthKey]?.updatedAt;
 
-  if (!inchargeAuthenticated) {
+  if (!userRole) {
     return (
       <div className={cn("min-h-screen flex items-center justify-center bg-deep-navy p-4", theme === 'light' && "theme-light")}>
         {loginStep === 'choose' && (
@@ -1209,8 +1182,9 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
+                  setProfessorPassword('');
+                  setProfessorError('');
                   setLoginStep('professor_password');
-                  setInchargeError('');
                 }}
                 className="w-full py-4 px-6 text-left text-sm font-medium text-muted-teal hover:bg-slate-blue rounded-lg transition-colors"
               >
@@ -1218,10 +1192,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setLoginStep('incharge_password');
-                  setInchargeError('');
-                }}
+                onClick={() => setLoginStep('incharge_password')}
                 className="w-full py-4 px-6 text-left text-sm font-medium text-muted-teal hover:bg-slate-blue rounded-lg transition-colors"
               >
                 Incharge Login
@@ -1242,7 +1213,12 @@ export default function App() {
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    submitRoleLogin('incharge', inchargePassword.trim());
+                    if (inchargePassword.trim() === 'timecardsadmin') {
+                      setUserRole('incharge');
+                      setInchargeError('');
+                    } else {
+                      setInchargeError('Invalid password');
+                    }
                   }
                 }}
                 placeholder="Enter password"
@@ -1262,7 +1238,14 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => submitRoleLogin('incharge', inchargePassword.trim())}
+                  onClick={() => {
+                    if (inchargePassword.trim() === 'timecardsadmin') {
+                      setUserRole('incharge');
+                      setInchargeError('');
+                    } else {
+                      setInchargeError('Invalid password');
+                    }
+                  }}
                   className="flex-1 py-2 text-sm font-medium bg-muted-teal text-deep-navy rounded-lg hover:opacity-90 transition-opacity"
                 >
                   Submit
@@ -1280,19 +1263,24 @@ export default function App() {
                 value={professorPassword}
                 onChange={(e) => {
                   setProfessorPassword(e.target.value);
-                  setInchargeError('');
+                  setProfessorError('');
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    submitRoleLogin('professor', professorPassword.trim());
+                    if (professorPassword.trim() === 'timecardsprof') {
+                      setUserRole('professor');
+                      setProfessorError('');
+                    } else {
+                      setProfessorError('Invalid password');
+                    }
                   }
                 }}
                 placeholder="Enter password"
                 className="w-full text-sm border border-border-blue-gray bg-deep-navy text-white px-4 py-3 rounded-lg focus:outline-none focus:ring-1 focus:ring-muted-teal"
                 autoFocus
               />
-              {inchargeError && (
-                <p className="text-xs text-red-400">{inchargeError}</p>
+              {professorError && (
+                <p className="text-xs text-red-400">{professorError}</p>
               )}
               <div className="flex gap-2">
                 <button
@@ -1304,7 +1292,14 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => submitRoleLogin('professor', professorPassword.trim())}
+                  onClick={() => {
+                    if (professorPassword.trim() === 'timecardsprof') {
+                      setUserRole('professor');
+                      setProfessorError('');
+                    } else {
+                      setProfessorError('Invalid password');
+                    }
+                  }}
                   className="flex-1 py-2 text-sm font-medium bg-muted-teal text-deep-navy rounded-lg hover:opacity-90 transition-opacity"
                 >
                   Submit
@@ -1347,8 +1342,9 @@ export default function App() {
                   Monthly Lecture Attendance ({selectedMonthKey})
                 </div>
                 <button
+                  disabled={!canEdit}
                   onClick={updateMonthlyAttendance}
-                  className="w-full text-left px-4 py-2 text-xs text-muted-teal hover:bg-slate-blue border-t border-border-blue-gray"
+                  className="w-full text-left px-4 py-2 text-xs text-muted-teal hover:bg-slate-blue border-t border-border-blue-gray disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Update Monthly Attendance
                 </button>
@@ -1382,7 +1378,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <div className={cn("relative group", isProfessorMode && "pointer-events-none opacity-50")}>
+            <div className="relative group">
               <button className="flex items-center gap-2 text-sm font-medium hover:text-muted-teal transition-colors">
                 {selectedYear?.name} <ChevronDown className="w-4 h-4" />
               </button>
@@ -1390,7 +1386,8 @@ export default function App() {
                 {years.map(y => (
                   <button 
                     key={y.id} 
-                    onClick={() => setSelectedYear(y)}
+                    disabled={!canEdit}
+                    onClick={() => canEdit && setSelectedYear(y)}
                     className={cn("w-full text-left px-4 py-2 text-sm hover:bg-slate-blue", selectedYear?.id === y.id && "bg-slate-blue font-semibold")}
                   >
                     Year {y.name}
@@ -1398,13 +1395,16 @@ export default function App() {
                 ))}
                 <div className="border-t border-border-blue-gray mt-2 pt-2">
                   <button 
-                    onClick={() => setIsProfessorModalOpen(true)}
-                    className="w-full text-left px-4 py-2 text-sm text-muted-teal flex items-center gap-2"
+                    disabled={!canEdit}
+                    onClick={() => canEdit && setIsProfessorModalOpen(true)}
+                    className="w-full text-left px-4 py-2 text-sm text-muted-teal flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <UserIcon className="w-4 h-4" /> Manage Professors
                   </button>
                   <button 
+                    disabled={!canEdit}
                     onClick={async () => {
+                      if (!canEdit) return;
                       const name = prompt("Enter new year (e.g. 2026):");
                       if (name) {
                         const newYearId = yearIdCounter++;
@@ -1435,7 +1435,7 @@ export default function App() {
                         setSelectedYear(newYear);
                       }
                     }}
-                    className="w-full text-left px-4 py-2 text-sm text-muted-teal flex items-center gap-2"
+                    className="w-full text-left px-4 py-2 text-sm text-muted-teal flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Plus className="w-4 h-4" /> Add Year
                   </button>
@@ -1460,7 +1460,6 @@ export default function App() {
                 type="date" 
                 value={mondayDate}
                 onChange={(e) => setMondayDate(e.target.value)}
-                disabled={isProfessorMode}
                 className="bg-deep-navy border border-border-blue-gray text-[10px] text-white p-1 rounded focus:outline-none focus:ring-1 focus:ring-muted-teal"
               />
             </div>
@@ -1476,14 +1475,14 @@ export default function App() {
                 {DAYS.map((day, idx) => (
                   <button
                     key={day}
-                    onClick={() => setActiveDay(idx)}
-                    disabled={isProfessorMode}
+                    disabled={!canEdit}
+                    onClick={() => canEdit && setActiveDay(idx)}
                     className={cn(
                       "px-6 py-2 text-sm font-medium rounded-t-md transition-all border-b-2",
+                      !canEdit && "opacity-40 cursor-not-allowed",
                       activeDay === idx 
                         ? "bg-midnight-blue border-muted-teal text-muted-teal shadow-none" 
-                        : "text-muted-steel border-transparent hover:bg-midnight-blue/50",
-                      isProfessorMode && "opacity-60 cursor-not-allowed"
+                        : "text-muted-steel border-transparent hover:bg-midnight-blue/50"
                     )}
                   >
                     {day}
@@ -1536,7 +1535,7 @@ export default function App() {
                                       entry={entry}
                                       onClear={() => clearCell(activeDay, sIdx, cls.id, batch.id)}
                                       onOpenAttendance={() => entry && openAttendance(entry)}
-                                      attendanceOnClick={isProfessorMode}
+                                      readOnly={!canEdit}
                                       professors={professors}
                                       subjects={subjects}
                                       classrooms={classrooms}
@@ -1563,12 +1562,13 @@ export default function App() {
                 animate={{ x: 0 }}
                 exit={{ x: '100%' }}
                 transition={{ duration: 0.2 }}
-                className={cn("w-80 border-l border-border-blue-gray bg-midnight-blue p-6 overflow-y-auto flex flex-col", isProfessorMode && "pointer-events-none opacity-60")}
+                className="w-80 border-l border-border-blue-gray bg-midnight-blue p-6 overflow-y-auto flex flex-col"
               >
                 <div className="mb-8 pb-8 border-b border-border-blue-gray space-y-3">
                   <button 
+                    disabled={!canEdit}
                     onClick={autoCreate}
-                    className="w-full btn-teal py-4 flex items-center justify-center gap-2 shadow-none"
+                    className="w-full btn-teal py-4 flex items-center justify-center gap-2 shadow-none disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     AUTO-CREATE TIMETABLE
                   </button>
@@ -1595,6 +1595,7 @@ export default function App() {
                     professors={professors}
                     onRequestAddProfessor={requestAddProfessor}
                     classes={classes}
+                    disabled={!canEdit}
                   />
                   <div className="border-t border-border-blue-gray my-8" />
                   <SidebarSection 
@@ -1604,6 +1605,7 @@ export default function App() {
                     onAdd={(name, extra) => addEntity('classrooms', name, extra)}
                     onRemove={(id) => removeEntity('classrooms', id)}
                     subjects={subjects}
+                    disabled={!canEdit}
                   />
                   <div className="border-t border-border-blue-gray my-4" />
                   <div className="pt-4 space-y-3">
@@ -1612,7 +1614,9 @@ export default function App() {
                       classes={classes}
                       rollRangeByClass={rollRangeByClass}
                       rollNumbersByClass={rollNumbersByClass}
+                      disabled={!canEdit}
                       onUpdateClassRange={(classId, range) => {
+                        if (!canEdit) return;
                         const cls = classes.find((c) => c.id === classId);
                         const generated = parseRollRangeInput(range);
                         setRollRangeByClass((prev) => ({ ...prev, [classId]: range }));
@@ -1651,14 +1655,16 @@ export default function App() {
                       }}
                     />
                     <button
+                      disabled={!canEdit}
                       onClick={exportStacksToFile}
-                      className="w-full btn-outline py-2 text-xs"
+                      className="w-full btn-outline py-2 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       SAVE STACKS (EXPORT)
                     </button>
                     <button
-                      onClick={() => importInputRef.current?.click()}
-                      className="w-full btn-outline py-2 text-xs"
+                      disabled={!canEdit}
+                      onClick={() => canEdit && importInputRef.current?.click()}
+                      className="w-full btn-outline py-2 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       IMPORT STACKS
                     </button>
@@ -1674,12 +1680,11 @@ export default function App() {
           {/* Sidebar toggle handle - moves with sidebar collapse */}
           <button
             type="button"
-            onClick={() => {
-              if (isProfessorMode) return;
-              setIsSidebarCollapsed((v) => !v);
-            }}
+            disabled={!canEdit}
+            onClick={() => canEdit && setIsSidebarCollapsed((v) => !v)}
             className={cn(
               "absolute top-6 -translate-x-1/2 z-20 bg-midnight-blue border border-border-blue-gray rounded-full w-7 h-7 flex items-center justify-center hover:bg-slate-blue transition-all duration-200",
+              !canEdit && "opacity-40 cursor-not-allowed",
               isSidebarCollapsed ? "right-0" : "right-80"
             )}
             aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -1695,9 +1700,9 @@ export default function App() {
         {/* Theme settings button */}
         <button
           type="button"
-          onClick={() => setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))}
-          className="fixed bottom-4 right-4 z-40 bg-midnight-blue border border-border-blue-gray rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-blue transition-colors"
-          disabled={isProfessorMode}
+          disabled={!canEdit}
+          onClick={() => canEdit && setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))}
+          className="fixed bottom-4 right-4 z-40 bg-midnight-blue border border-border-blue-gray rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-blue transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           aria-label="Toggle theme"
         >
           <Settings className="w-5 h-5 text-muted-steel" />
@@ -1957,7 +1962,7 @@ const DroppableCellWrapper = ({ id, children }: { id: string, children: React.Re
   );
 };
 
-const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, professors, onRequestAddProfessor, classes, subjects }: { 
+const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, professors, onRequestAddProfessor, classes, subjects, disabled }: { 
   title: string, 
   items: any[], 
   type: string, 
@@ -1967,7 +1972,8 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
   professors?: Professor[],
   onRequestAddProfessor?: (name: string) => void,
   classes?: ClassWithBatches[],
-  subjects?: Subject[]
+  subjects?: Subject[],
+  disabled?: boolean
 }) => {
   const [step, setStep] = useState<'none' | 'subject' | 'mode' | 'professor' | 'classes_taught' | 'batch_selection' | 'weightage' | 'generic' | 'room_type' | 'subject_selection'>('none');
   const [formData, setFormData] = useState({ name: '', professorId: '', weightage: 2, allowedClassIds: [] as number[], allowedBatchIds: [] as number[], mode: 'lecture' as 'lecture' | 'lab', roomType: undefined as 'lecture' | 'lab' | undefined, allowedSubjectIds: [] as number[] });
@@ -1994,7 +2000,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
     <div className="sidebar-stack">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-semibold text-muted-steel uppercase tracking-widest">{title}</h3>
-        <button onClick={() => setStep(type === 'subject' ? 'subject' : type === 'classroom' ? 'room_type' : 'generic')} className="p-1 hover:bg-slate-blue rounded transition-colors">
+        <button disabled={disabled} onClick={() => !disabled && setStep(type === 'subject' ? 'subject' : type === 'classroom' ? 'room_type' : 'generic')} className="p-1 hover:bg-slate-blue rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
           <Plus className="w-4 h-4" />
         </button>
       </div>
@@ -2009,6 +2015,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
             onRemove={() => onRemove(item.id)}
             onUpdate={(newData) => { (onUpdate as any)?.(type, item.id, newData); }}
             professors={professors}
+            disabled={disabled}
           />
         ))}
       </div>
@@ -2369,11 +2376,13 @@ const RollNumberManager = ({
   classes,
   rollRangeByClass,
   rollNumbersByClass,
+  disabled,
   onUpdateClassRange,
 }: {
   classes: ClassWithBatches[];
   rollRangeByClass: Record<number, string>;
   rollNumbersByClass: Record<number, string[]>;
+  disabled?: boolean;
   onUpdateClassRange: (classId: number, value: string) => void;
 }) => {
   return (
@@ -2384,6 +2393,7 @@ const RollNumberManager = ({
           <input
             value={rollRangeByClass[cls.id] ?? ''}
             onChange={(e) => onUpdateClassRange(cls.id, e.target.value)}
+            disabled={disabled}
             className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded"
             placeholder="e.g. 1-60"
           />
@@ -2396,11 +2406,11 @@ const RollNumberManager = ({
   );
 };
 
-const DraggableItem = ({ id, type, data, onRemove, onUpdate, professors }: { id: string, type: string, data: any, onRemove: () => void, onUpdate?: (newData: any) => void, professors?: Professor[], key?: any }) => {
+const DraggableItem = ({ id, type, data, onRemove, onUpdate, professors, disabled }: { id: string, type: string, data: any, onRemove: () => void, onUpdate?: (newData: any) => void, professors?: Professor[], disabled?: boolean, key?: any }) => {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id });
   
   return (
-    <div ref={setNodeRef} {...attributes} {...listeners} className={cn(isDragging && "opacity-30")}>
+    <div ref={setNodeRef} {...(!disabled ? attributes : {})} {...(!disabled ? listeners : {})} className={cn(isDragging && "opacity-30", disabled && "pointer-events-none opacity-80")}>
       <DraggableChip id={id} type={type} data={data} onRemove={onRemove} onUpdate={onUpdate} professors={professors} />
     </div>
   );

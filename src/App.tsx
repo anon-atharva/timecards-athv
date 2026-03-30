@@ -240,9 +240,16 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [rollNumbersByClass, setRollNumbersByClass] = useState<Record<number, string[]>>({});
   const [rollNumbersByBatch, setRollNumbersByBatch] = useState<Record<number, string[]>>({});
+  const [rollRangeByClass, setRollRangeByClass] = useState<Record<number, string>>({});
+  const [rollRangeByBatch, setRollRangeByBatch] = useState<Record<number, string>>({});
   const [attendanceTarget, setAttendanceTarget] = useState<TimetableEntry | null>(null);
-  const [attendanceMarks, setAttendanceMarks] = useState<Record<string, boolean>>({});
+  const [attendanceMarks, setAttendanceMarks] = useState<Record<string, boolean>>({}); // true means absent
   const [attendanceRecords, setAttendanceRecords] = useState<Record<string, Record<string, boolean>>>({});
+  const [attendanceHistory, setAttendanceHistory] = useState<Array<{
+    weekStart: string;
+    generatedAt: string;
+    daywise: Array<{ day: string; totalSessions: number; totalAbsentees: number }>;
+  }>>([]);
   const [mondayDate, setMondayDate] = useState<string>(() => {
     const today = new Date();
     const day = today.getDay();
@@ -268,6 +275,7 @@ export default function App() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const LOCAL_STACKS_KEY = 'timecards.stacks.local.v1';
+  const LOCAL_ATTENDANCE_KEY = 'timecards.attendance.local.v1';
 
   const reseedCountersFromStacks = (next: { professors: Professor[]; subjects: Subject[]; classrooms: Classroom[] }) => {
     const maxProfessorId = next.professors.reduce((m, p) => Math.max(m, p.id), 0);
@@ -300,12 +308,24 @@ export default function App() {
         professors: Array.isArray(parsed?.professors) ? parsed.professors : [],
         subjects: Array.isArray(parsed?.subjects) ? parsed.subjects : [],
         classrooms: Array.isArray(parsed?.classrooms) ? parsed.classrooms : [],
+        rollNumbersByClass: parsed?.rollNumbersByClass && typeof parsed.rollNumbersByClass === 'object' ? parsed.rollNumbersByClass : {},
+        rollNumbersByBatch: parsed?.rollNumbersByBatch && typeof parsed.rollNumbersByBatch === 'object' ? parsed.rollNumbersByBatch : {},
+        rollRangeByClass: parsed?.rollRangeByClass && typeof parsed.rollRangeByClass === 'object' ? parsed.rollRangeByClass : {},
+        rollRangeByBatch: parsed?.rollRangeByBatch && typeof parsed.rollRangeByBatch === 'object' ? parsed.rollRangeByBatch : {},
       };
 
       setProfessors(next.professors);
       setSubjects(next.subjects);
       setClassrooms(next.classrooms);
-      reseedCountersFromStacks(next);
+      setRollNumbersByClass(next.rollNumbersByClass);
+      setRollNumbersByBatch(next.rollNumbersByBatch);
+      setRollRangeByClass(next.rollRangeByClass);
+      setRollRangeByBatch(next.rollRangeByBatch);
+      reseedCountersFromStacks({
+        professors: next.professors,
+        subjects: next.subjects,
+        classrooms: next.classrooms,
+      });
     } catch {
       // Ignore corrupted local storage
     } finally {
@@ -322,11 +342,40 @@ export default function App() {
         professors,
         subjects,
         classrooms,
+        rollNumbersByClass,
+        rollNumbersByBatch,
+        rollRangeByClass,
+        rollRangeByBatch,
       }));
     } catch {
       // Ignore quota / storage errors
     }
-  }, [professors, subjects, classrooms, hasLoadedSavedStacks]);
+  }, [professors, subjects, classrooms, rollNumbersByClass, rollNumbersByBatch, rollRangeByClass, rollRangeByBatch, hasLoadedSavedStacks]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(LOCAL_ATTENDANCE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as any;
+      setAttendanceRecords(parsed?.attendanceRecords && typeof parsed.attendanceRecords === 'object' ? parsed.attendanceRecords : {});
+      setAttendanceHistory(Array.isArray(parsed?.attendanceHistory) ? parsed.attendanceHistory : []);
+    } catch {
+      // Ignore corrupted local storage
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(LOCAL_ATTENDANCE_KEY, JSON.stringify({
+        attendanceRecords,
+        attendanceHistory,
+      }));
+    } catch {
+      // Ignore quota / storage errors
+    }
+  }, [attendanceRecords, attendanceHistory]);
 
   useEffect(() => {
     if (selectedYear) {
@@ -528,6 +577,8 @@ export default function App() {
     setClassrooms(nextClassrooms);
     setRollNumbersByClass(nextRollNumbersByClass);
     setRollNumbersByBatch(nextRollNumbersByBatch);
+    setRollRangeByClass({});
+    setRollRangeByBatch({});
     setTimetable([]); // imported stacks would otherwise mismatch old IDs
     reseedCountersFromStacks({ professors: nextProfessors, subjects: nextSubjects, classrooms: nextClassrooms });
     alert('Imported stacks successfully.');
@@ -987,8 +1038,23 @@ export default function App() {
     setTimetable(prev => [...prev, ...newEntries]);
   };
 
-  const parseRollInput = (value: string) =>
-    Array.from(new Set(value.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)));
+  const parseRollRangeInput = (value: string) => {
+    const tokens = value.split(',').map((x) => x.trim()).filter(Boolean);
+    const out: string[] = [];
+    for (const token of tokens) {
+      const m = token.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (m) {
+        let start = Number(m[1]);
+        let end = Number(m[2]);
+        if (Number.isNaN(start) || Number.isNaN(end)) continue;
+        if (start > end) [start, end] = [end, start];
+        for (let i = start; i <= end; i++) out.push(String(i));
+        continue;
+      }
+      if (/^\d+$/.test(token)) out.push(token);
+    }
+    return Array.from(new Set(out));
+  };
 
   const getAttendanceContext = (entry: TimetableEntry) => {
     const subject = subjects.find((s) => s.id === entry.subject_id);
@@ -998,14 +1064,14 @@ export default function App() {
         mode,
         scopeLabel: 'Batch-wise',
         rolls: rollNumbersByBatch[entry.batch_id] ?? [],
-        key: `${entry.day}:${entry.time_slot}:${entry.class_id}:${entry.batch_id}:lab`,
+        key: `${mondayDate}:${entry.day}:${entry.time_slot}:${entry.class_id}:${entry.batch_id}:lab`,
       };
     }
     return {
       mode,
       scopeLabel: 'Class-wise',
       rolls: rollNumbersByClass[entry.class_id] ?? [],
-      key: `${entry.day}:${entry.time_slot}:${entry.class_id}:lecture`,
+      key: `${mondayDate}:${entry.day}:${entry.time_slot}:${entry.class_id}:lecture`,
     };
   };
 
@@ -1021,9 +1087,49 @@ export default function App() {
   const saveAttendance = () => {
     if (!attendanceTarget) return;
     const ctx = getAttendanceContext(attendanceTarget);
-    setAttendanceRecords((prev) => ({ ...prev, [ctx.key]: attendanceMarks }));
+    const absentOnly = Object.fromEntries(
+      Object.entries(attendanceMarks).filter(([, isAbsent]) => !!isAbsent)
+    );
+    setAttendanceRecords((prev) => ({ ...prev, [ctx.key]: absentOnly }));
     setAttendanceTarget(null);
   };
+
+  const buildCurrentWeekSummary = (weekStart: string = mondayDate) => {
+    const dayStats = DAYS.map((day) => ({ day, totalSessions: 0, totalAbsentees: 0 }));
+    for (const [key, marks] of Object.entries(attendanceRecords)) {
+      const parts = key.split(':');
+      if (parts[0] !== weekStart) continue;
+      const dayIdx = Number(parts[1]);
+      if (!Number.isInteger(dayIdx) || dayIdx < 0 || dayIdx >= DAYS.length) continue;
+      dayStats[dayIdx]!.totalSessions += 1;
+      dayStats[dayIdx]!.totalAbsentees += Object.keys(marks).length;
+    }
+    return {
+      weekStart,
+      generatedAt: new Date().toISOString(),
+      daywise: dayStats,
+    };
+  };
+
+  const finalizeWeekAttendance = () => {
+    const summary = buildCurrentWeekSummary();
+    setAttendanceHistory((prev) => {
+      const withoutCurrentWeek = prev.filter((x) => x.weekStart !== mondayDate);
+      return [summary, ...withoutCurrentWeek].slice(0, 24);
+    });
+  };
+
+  const previousMondayRef = useRef(mondayDate);
+  useEffect(() => {
+    const previousWeek = previousMondayRef.current;
+    if (previousWeek === mondayDate) return;
+    const summary = buildCurrentWeekSummary(previousWeek);
+    setAttendanceHistory((prev) => {
+      const withoutPreviousWeek = prev.filter((x) => x.weekStart !== previousWeek);
+      return [summary, ...withoutPreviousWeek].slice(0, 24);
+    });
+    previousMondayRef.current = mondayDate;
+  }, [mondayDate, attendanceRecords]);
 
   if (!inchargeAuthenticated) {
     return (
@@ -1134,6 +1240,36 @@ export default function App() {
         <header className="h-16 bg-midnight-blue border-b border-border-blue-gray px-6 flex items-center justify-between sticky top-0 z-30">
           <div className="flex items-center gap-8">
             <h1 className="text-xl font-serif font-bold text-muted-teal tracking-tight">TIMECARDS</h1>
+            <div className="relative group">
+              <button className="flex items-center gap-2 text-sm font-medium hover:text-muted-teal transition-colors">
+                Attendance <ChevronDown className="w-4 h-4" />
+              </button>
+              <div className="absolute top-full left-0 mt-1 bg-midnight-blue border border-border-blue-gray shadow-none rounded-md py-2 w-72 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-40">
+                <button
+                  onClick={finalizeWeekAttendance}
+                  className="w-full text-left px-4 py-2 text-sm text-muted-teal hover:bg-slate-blue"
+                >
+                  Compile & Save Current Week
+                </button>
+                <div className="border-t border-border-blue-gray mt-2 pt-2 max-h-56 overflow-y-auto custom-scrollbar">
+                  {attendanceHistory.length === 0 && (
+                    <div className="px-4 py-2 text-xs text-muted-steel">No saved weekly attendance yet.</div>
+                  )}
+                  {attendanceHistory.map((week) => (
+                    <div key={`${week.weekStart}-${week.generatedAt}`} className="px-4 py-2 border-b border-border-blue-gray/40 last:border-b-0">
+                      <div className="text-xs text-muted-teal font-semibold">Week of {week.weekStart}</div>
+                      <div className="mt-1 space-y-0.5">
+                        {week.daywise.map((d) => (
+                          <div key={`${week.weekStart}-${d.day}`} className="text-[10px] text-muted-steel">
+                            {d.day}: {d.totalAbsentees} absent / {d.totalSessions} sessions
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
             <div className="relative group">
               <button className="flex items-center gap-2 text-sm font-medium hover:text-muted-teal transition-colors">
                 {selectedYear?.name} <ChevronDown className="w-4 h-4" />
@@ -1355,13 +1491,17 @@ export default function App() {
                     <h4 className="text-[10px] text-muted-steel text-center uppercase tracking-widest">Roll Numbers (Attendance)</h4>
                     <RollNumberManager
                       classes={classes}
+                      rollRangeByClass={rollRangeByClass}
+                      rollRangeByBatch={rollRangeByBatch}
                       rollNumbersByClass={rollNumbersByClass}
                       rollNumbersByBatch={rollNumbersByBatch}
-                      onUpdateClass={(classId, text) => {
-                        setRollNumbersByClass((prev) => ({ ...prev, [classId]: parseRollInput(text) }));
+                      onUpdateClassRange={(classId, range) => {
+                        setRollRangeByClass((prev) => ({ ...prev, [classId]: range }));
+                        setRollNumbersByClass((prev) => ({ ...prev, [classId]: parseRollRangeInput(range) }));
                       }}
-                      onUpdateBatch={(batchId, text) => {
-                        setRollNumbersByBatch((prev) => ({ ...prev, [batchId]: parseRollInput(text) }));
+                      onUpdateBatchRange={(batchId, range) => {
+                        setRollRangeByBatch((prev) => ({ ...prev, [batchId]: range }));
+                        setRollNumbersByBatch((prev) => ({ ...prev, [batchId]: parseRollRangeInput(range) }));
                       }}
                     />
                   </div>
@@ -1488,6 +1628,29 @@ export default function App() {
                   <p className="text-xs text-muted-steel mb-4">
                     {subject?.name ?? 'Subject'} - {ctx.scopeLabel} ({cls?.name ?? 'Class'}{ctx.mode === 'lab' ? ` / ${batch?.name ?? 'Batch'}` : ''})
                   </p>
+                  <p className="text-[10px] text-muted-steel mb-2 uppercase tracking-widest">Mark only absentees</p>
+                  <div className="flex gap-2 mb-2">
+                    <button
+                      className="flex-1 btn-outline py-1 text-xs"
+                      onClick={() => {
+                        const reset: Record<string, boolean> = {};
+                        for (const roll of ctx.rolls) reset[roll] = false;
+                        setAttendanceMarks(reset);
+                      }}
+                    >
+                      Mark all present
+                    </button>
+                    <button
+                      className="flex-1 btn-outline py-1 text-xs"
+                      onClick={() => {
+                        const reset: Record<string, boolean> = {};
+                        for (const roll of ctx.rolls) reset[roll] = false;
+                        setAttendanceMarks(reset);
+                      }}
+                    >
+                      Clear absentees
+                    </button>
+                  </div>
                   <div className="max-h-72 overflow-y-auto border border-border-blue-gray rounded-md p-2 space-y-1">
                     {ctx.rolls.length === 0 && (
                       <div className="text-xs text-muted-steel p-2">No roll numbers found. Add them in the sidebar Roll Numbers section.</div>
@@ -1499,7 +1662,7 @@ export default function App() {
                           checked={!!attendanceMarks[roll]}
                           onChange={(e) => setAttendanceMarks(prev => ({ ...prev, [roll]: e.target.checked }))}
                         />
-                        <span>{roll}</span>
+                        <span>{roll} <span className="text-[10px] text-muted-steel">(absent)</span></span>
                       </label>
                     ))}
                   </div>
@@ -2073,37 +2236,43 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
 
 const RollNumberManager = ({
   classes,
+  rollRangeByClass,
+  rollRangeByBatch,
   rollNumbersByClass,
   rollNumbersByBatch,
-  onUpdateClass,
-  onUpdateBatch,
+  onUpdateClassRange,
+  onUpdateBatchRange,
 }: {
   classes: ClassWithBatches[];
+  rollRangeByClass: Record<number, string>;
+  rollRangeByBatch: Record<number, string>;
   rollNumbersByClass: Record<number, string[]>;
   rollNumbersByBatch: Record<number, string[]>;
-  onUpdateClass: (classId: number, value: string) => void;
-  onUpdateBatch: (batchId: number, value: string) => void;
+  onUpdateClassRange: (classId: number, value: string) => void;
+  onUpdateBatchRange: (batchId: number, value: string) => void;
 }) => {
   return (
     <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
       {classes.map((cls) => (
         <div key={`class-roll-${cls.id}`} className="border border-border-blue-gray rounded-md p-2 bg-deep-navy/40 space-y-1">
-          <label className="text-[10px] uppercase tracking-widest text-muted-steel">{cls.name} (Class-wise / Lecture)</label>
-          <textarea
-            value={(rollNumbersByClass[cls.id] ?? []).join(', ')}
-            onChange={(e) => onUpdateClass(cls.id, e.target.value)}
-            className="w-full min-h-12 text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded resize-y"
-            placeholder="e.g. 101, 102, 103"
+          <label className="text-[10px] uppercase tracking-widest text-muted-steel">{cls.name} (Class-wise / Lecture range)</label>
+          <input
+            value={rollRangeByClass[cls.id] ?? ''}
+            onChange={(e) => onUpdateClassRange(cls.id, e.target.value)}
+            className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded"
+            placeholder="e.g. 1-60"
           />
+          <div className="text-[10px] text-muted-steel">{(rollNumbersByClass[cls.id] ?? []).length} rolls generated</div>
           {cls.batches.map((batch) => (
             <div key={`batch-roll-${batch.id}`} className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-muted-steel">{batch.name} (Batch-wise / Lab)</label>
-              <textarea
-                value={(rollNumbersByBatch[batch.id] ?? []).join(', ')}
-                onChange={(e) => onUpdateBatch(batch.id, e.target.value)}
-                className="w-full min-h-10 text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded resize-y"
-                placeholder="e.g. 101A, 101B"
+              <label className="text-[10px] uppercase tracking-widest text-muted-steel">{batch.name} (Batch-wise / Lab range)</label>
+              <input
+                value={rollRangeByBatch[batch.id] ?? ''}
+                onChange={(e) => onUpdateBatchRange(batch.id, e.target.value)}
+                className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded"
+                placeholder="e.g. 1-20"
               />
+              <div className="text-[10px] text-muted-steel">{(rollNumbersByBatch[batch.id] ?? []).length} rolls generated</div>
             </div>
           ))}
         </div>

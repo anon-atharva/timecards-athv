@@ -21,6 +21,20 @@ const LUNCH_COLOR = '#e6d9c8';
 const LUNCH_SLOT_12_1 = 3; // index in TIME_SLOTS
 const LUNCH_SLOT_1_2 = 4;
 
+/** Local calendar date as YYYY-MM-DD (avoids UTC skew from toISOString). */
+function formatLocalYYYYMMDD(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Parse YYYY-MM-DD as a calendar day in the user's timezone. */
+function parseLocalYYYYMMDD(ymd: string) {
+  const [y, m, d] = ymd.split('-').map((x) => Number(x));
+  return new Date(y, m - 1, d);
+}
+
 const COLOR_PALETTE = [
   '#0EA5E9', // sky
   '#8B5CF6', // violet
@@ -262,8 +276,9 @@ export default function App() {
     const today = new Date();
     const day = today.getDay();
     const diff = today.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(today.setDate(diff));
-    return monday.toISOString().split('T')[0];
+    const monday = new Date(today);
+    monday.setDate(diff);
+    return formatLocalYYYYMMDD(monday);
   });
 
   const [loginStep, setLoginStep] = useState<'choose' | 'incharge_password' | 'professor_password' | 'under_construction'>('choose');
@@ -278,9 +293,9 @@ export default function App() {
   });
 
   const getDateForDay = (dayIdx: number) => {
-    const date = new Date(mondayDate);
+    const date = parseLocalYYYYMMDD(mondayDate);
     date.setDate(date.getDate() + dayIdx);
-    return date.toLocaleDateString('en-GB'); // dd/mm/yyyy
+    return date.toLocaleDateString('en-GB'); // dd/mm/yyyy; document en-GB helps Monday-first native date picker
   };
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -1497,6 +1512,7 @@ export default function App() {
               <span className="text-[10px] text-muted-steel uppercase font-bold">Week of:</span>
               <input 
                 type="date" 
+                lang="en-GB"
                 value={mondayDate}
                 disabled={!canNavigateSchedule}
                 onChange={(e) => canNavigateSchedule && setMondayDate(e.target.value)}

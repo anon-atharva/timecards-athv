@@ -907,12 +907,11 @@ export default function App() {
       timetable.map(e => `${e.day}:${e.time_slot}:${e.class_id}:${e.batch_id}`)
     );
     const newEntries: TimetableEntry[] = [];
-    let slotToggle = 0;
-    for (const cls of classes) {
-      for (const batch of cls.batches) {
-        for (let day = 0; day < 5; day++) {
-          const slot = slotToggle % 2 === 0 ? LUNCH_SLOT_12_1 : LUNCH_SLOT_1_2;
-          slotToggle++;
+    for (let classIdx = 0; classIdx < classes.length; classIdx++) {
+      const cls = classes[classIdx]!;
+      for (let day = 0; day < 5; day++) {
+        const slot = (classIdx + day) % 2 === 0 ? LUNCH_SLOT_12_1 : LUNCH_SLOT_1_2;
+        for (const batch of cls.batches) {
           const key = `${day}:${slot}:${cls.id}:${batch.id}`;
           if (existingKeys.has(key)) continue;
           existingKeys.add(key);
@@ -1553,7 +1552,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
         </button>
       </div>
       
-      <div className="space-y-2 mb-4">
+      <div className="grid grid-cols-3 gap-2 mb-4">
         {items.map(item => (
           <DraggableItem 
             key={item.id} 

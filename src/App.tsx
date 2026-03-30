@@ -424,11 +424,16 @@ export default function App() {
       allowedBatches?: string[]; 
       mode?: 'lecture' | 'lab';
       consecutiveLectureBlocks?: boolean;
+      consecutiveLabBlocks?: boolean;
     }>;
     classrooms: Array<{ name: string; roomType?: 'lecture' | 'lab'; allowedSubjects?: string[] }>;
     rollNumbers?: {
       classes: Array<{ className: string; rollNumbers: string[] }>;
       batches: Array<{ batchName: string; rollNumbers: string[] }>;
+    };
+    rollRanges?: {
+      classes: Array<{ className: string; range: string }>;
+      batches: Array<{ batchName: string; range: string }>;
     };
   };
 
@@ -460,6 +465,7 @@ export default function App() {
         allowedBatches: (s.allowed_batch_ids ?? []).map(id => batchNameById.get(id)).filter((x): x is string => typeof x === 'string'),
         mode: s.mode,
         consecutiveLectureBlocks: !!s.consecutive_lecture_blocks,
+        consecutiveLabBlocks: !!s.consecutive_lab_blocks,
       })),
       classrooms: classrooms.map(c => ({
         name: c.name,
@@ -477,6 +483,20 @@ export default function App() {
           .map(([batchId, rollNumbers]) => ({
             batchName: batchNameById.get(Number(batchId)) ?? '',
             rollNumbers,
+          }))
+          .filter((x) => !!x.batchName),
+      },
+      rollRanges: {
+        classes: Object.entries(rollRangeByClass)
+          .map(([classId, range]) => ({
+            className: classNameById.get(Number(classId)) ?? '',
+            range,
+          }))
+          .filter((x) => !!x.className),
+        batches: Object.entries(rollRangeByBatch)
+          .map(([batchId, range]) => ({
+            batchName: batchNameById.get(Number(batchId)) ?? '',
+            range,
           }))
           .filter((x) => !!x.batchName),
       },
@@ -557,6 +577,8 @@ export default function App() {
       const mode = s?.mode === 'lab' || s?.mode === 'lecture' ? s.mode : undefined;
       const consecutiveLectureBlocks =
         !!s?.consecutiveLectureBlocks || !!s?.consecutive_lecture_blocks;
+      const consecutiveLabBlocks =
+        !!s?.consecutiveLabBlocks || !!s?.consecutive_lab_blocks;
 
       nextSubjects.push({
         id: subjectIdCounter++,
@@ -567,6 +589,7 @@ export default function App() {
         allowed_batch_ids: Array.from(new Set(allowed_batch_ids)),
         mode,
         consecutive_lecture_blocks: consecutiveLectureBlocks || undefined,
+        consecutive_lab_blocks: consecutiveLabBlocks || undefined,
       });
     }
     const subjectIdByName = new Map<string, number>(nextSubjects.map(s => [s.name, s.id]));
@@ -613,13 +636,47 @@ export default function App() {
       ));
     }
 
+    const nextRollRangesByClass: Record<number, string> = {};
+    const importedClassRanges = Array.isArray(parsed?.rollRanges?.classes) ? parsed.rollRanges.classes : [];
+    for (const item of importedClassRanges) {
+      const className = typeof item?.className === 'string' ? item.className.trim() : '';
+      const classId = className ? classIdByName.get(className) : undefined;
+      const range = typeof item?.range === 'string' ? item.range.trim() : '';
+      if (!classId || !range) continue;
+      nextRollRangesByClass[classId] = range;
+    }
+
+    const nextRollRangesByBatch: Record<number, string> = {};
+    const importedBatchRanges = Array.isArray(parsed?.rollRanges?.batches) ? parsed.rollRanges.batches : [];
+    for (const item of importedBatchRanges) {
+      const batchName = typeof item?.batchName === 'string' ? item.batchName.trim() : '';
+      const batchId = batchName ? batchIdByName.get(batchName) : undefined;
+      const range = typeof item?.range === 'string' ? item.range.trim() : '';
+      if (!batchId || !range) continue;
+      nextRollRangesByBatch[batchId] = range;
+    }
+
+    // Fallback: if roll arrays are missing but ranges exist, derive from ranges.
+    if (Object.keys(nextRollNumbersByBatch).length === 0 && Object.keys(nextRollRangesByBatch).length > 0) {
+      for (const [batchIdStr, range] of Object.entries(nextRollRangesByBatch)) {
+        const batchId = Number(batchIdStr);
+        nextRollNumbersByBatch[batchId] = parseRollRangeInput(range);
+      }
+    }
+    if (Object.keys(nextRollNumbersByClass).length === 0 && Object.keys(nextRollRangesByClass).length > 0) {
+      for (const [classIdStr, range] of Object.entries(nextRollRangesByClass)) {
+        const classId = Number(classIdStr);
+        nextRollNumbersByClass[classId] = parseRollRangeInput(range);
+      }
+    }
+
     setProfessors(nextProfessors);
     setSubjects(nextSubjects);
     setClassrooms(nextClassrooms);
     setRollNumbersByClass(nextRollNumbersByClass);
     setRollNumbersByBatch(nextRollNumbersByBatch);
-    setRollRangeByClass({});
-    setRollRangeByBatch({});
+    setRollRangeByClass(nextRollRangesByClass);
+    setRollRangeByBatch(nextRollRangesByBatch);
     setTimetable([]); // imported stacks would otherwise mismatch old IDs
     reseedCountersFromStacks({ professors: nextProfessors, subjects: nextSubjects, classrooms: nextClassrooms });
     alert('Imported stacks successfully.');
@@ -644,6 +701,7 @@ export default function App() {
         allowed_class_ids: extra?.allowed_class_ids ?? [],
         allowed_batch_ids: extra?.allowed_batch_ids ?? [],
         consecutive_lecture_blocks: extra?.consecutive_lecture_blocks,
+        consecutive_lab_blocks: extra?.consecutive_lab_blocks,
       };
       setSubjects(prev => [...prev, newSubject]);
     }
@@ -1083,6 +1141,7 @@ export default function App() {
         } else {
           const labHoursPerSubjectPerDay: Record<string, number> = {};
           const labKey = (batchId: number, day: number) => `${cls.id}:${batchId}:${sub.id}:${day}`;
+          const consecutive2hrLab = !!(sub as any).consecutive_lab_blocks;
 
           for (const batch of cls.batches) {
             if (sub.allowed_batch_ids && sub.allowed_batch_ids.length > 0 && !sub.allowed_batch_ids.includes(batch.id)) continue;
@@ -1099,6 +1158,73 @@ export default function App() {
                   availableSlots.push(availableSlots.shift()!);
                   attempts++;
                   continue;
+                }
+
+                // Optional: schedule lab as consecutive 2-hour block when possible.
+                if (consecutive2hrLab && h + 1 < sub.weightage && subjectDayCount === 0 && slot <= 6) {
+                  const hasNextSlot = availableSlots.some((x) => x.day === day && x.slot === slot + 1);
+                  if (hasNextSlot) {
+                    const profId = sub.professor_id || (professors[Math.floor(Math.random() * professors.length)]?.id);
+                    const labRooms = classrooms.filter(r => r.room_type === 'lab');
+                    const eligibleRooms = labRooms.filter(r =>
+                      !r.allowed_subject_ids?.length || r.allowed_subject_ids.includes(sub.id)
+                    );
+                    const pool = eligibleRooms.length ? eligibleRooms : labRooms;
+                    const room1 = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
+                    const room2 = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
+
+                    const profKey1 = `${day}:${slot}:${profId}`;
+                    const profKey2 = `${day}:${slot + 1}:${profId}`;
+                    const roomKey1 = `${day}:${slot}:${room1?.id}`;
+                    const roomKey2 = `${day}:${slot + 1}:${room2?.id}`;
+
+                    const profBusyPair = !!(profId && (profSchedule[profKey1] || profSchedule[profKey2]));
+                    const roomBusyPair = !!((room1 && roomSchedule[roomKey1]) || (room2 && roomSchedule[roomKey2]));
+
+                    if (!profBusyPair && !roomBusyPair) {
+                      newEntries.push({
+                        id: timetableEntryIdCounter++,
+                        day,
+                        time_slot: slot,
+                        class_id: cls.id,
+                        batch_id: batch.id,
+                        subject_id: sub.id,
+                        professor_id: profId || null,
+                        classroom_id: room1?.id || null,
+                        exception_flag: false,
+                      });
+                      newEntries.push({
+                        id: timetableEntryIdCounter++,
+                        day,
+                        time_slot: slot + 1,
+                        class_id: cls.id,
+                        batch_id: batch.id,
+                        subject_id: sub.id,
+                        professor_id: profId || null,
+                        classroom_id: room2?.id || null,
+                        exception_flag: false,
+                      });
+
+                      occupied.add(`${day}:${slot}:${cls.id}:${batch.id}`);
+                      occupied.add(`${day}:${slot + 1}:${cls.id}:${batch.id}`);
+                      labHoursPerSubjectPerDay[labKey(batch.id, day)] = subjectDayCount + 2;
+
+                      if (profId) {
+                        profSchedule[profKey1] = true;
+                        profSchedule[profKey2] = true;
+                      }
+                      if (room1) roomSchedule[roomKey1] = true;
+                      if (room2) roomSchedule[roomKey2] = true;
+
+                      availableSlots = availableSlots.filter(
+                        (x) => !(x.day === day && (x.slot === slot || x.slot === slot + 1))
+                      );
+
+                      found = true;
+                      h += 1; // consume the next hour as part of the same 2-hour block
+                      break;
+                    }
+                  }
                 }
 
                 const profId = sub.professor_id || (professors[Math.floor(Math.random() * professors.length)]?.id);
@@ -2143,6 +2269,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
     roomType: undefined as 'lecture' | 'lab' | undefined, 
     allowedSubjectIds: [] as number[], 
     consecutiveLectureBlocks: false,
+    consecutiveLabBlocks: false,
   });
   const [newProfName, setNewProfName] = useState('');
 
@@ -2154,6 +2281,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
       allowed_batch_ids: formData.allowedBatchIds,
       mode: formData.mode,
       consecutive_lecture_blocks: formData.consecutiveLectureBlocks,
+      consecutive_lab_blocks: formData.consecutiveLabBlocks,
     });
     setStep('none');
     setFormData({ 
@@ -2166,6 +2294,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
       roomType: undefined,
       allowedSubjectIds: [], 
       consecutiveLectureBlocks: false,
+      consecutiveLabBlocks: false,
     });
   };
 
@@ -2425,6 +2554,17 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
                     type="checkbox"
                     checked={formData.consecutiveLectureBlocks}
                     onChange={(e) => setFormData({ ...formData, consecutiveLectureBlocks: e.target.checked })}
+                    className="rounded border-border-blue-gray bg-deep-navy text-muted-teal focus:ring-muted-teal"
+                  />
+                </label>
+              )}
+              {formData.mode === 'lab' && (
+                <label className="flex items-center justify-between gap-3 text-[10px] text-muted-steel mb-3">
+                  <span className="uppercase tracking-widest">Consecutive 2-hr lab blocks</span>
+                  <input
+                    type="checkbox"
+                    checked={formData.consecutiveLabBlocks}
+                    onChange={(e) => setFormData({ ...formData, consecutiveLabBlocks: e.target.checked })}
                     className="rounded border-border-blue-gray bg-deep-navy text-muted-teal focus:ring-muted-teal"
                   />
                 </label>

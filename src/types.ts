@@ -44,6 +44,8 @@ export interface Subject {
   allowed_batch_ids?: number[];
   /** If true, lecture hours should be scheduled in consecutive 2-hour blocks when possible. */
   consecutive_lecture_blocks?: boolean;
+  /** If true, lab hours should be scheduled in consecutive 2-hour blocks when possible. */
+  consecutive_lab_blocks?: boolean;
 }
 
 export interface Classroom {

@@ -130,6 +130,7 @@ const DroppableCell = ({
   entry, 
   onClear,
   onOpenAttendance,
+  attendanceOnClick,
   professors,
   subjects,
   classrooms
@@ -141,6 +142,7 @@ const DroppableCell = ({
   entry?: TimetableEntry,
   onClear: () => void,
   onOpenAttendance?: () => void,
+  attendanceOnClick?: boolean,
   professors: Professor[],
   subjects: Subject[],
   classrooms: Classroom[]
@@ -173,13 +175,19 @@ const DroppableCell = ({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
             ref={setNodeRef}
-            {...attributes}
-            {...listeners}
+            {...(!attendanceOnClick ? attributes : {})}
+            {...(!attendanceOnClick ? listeners : {})}
             className={cn(
-              "relative flex items-center gap-2 w-full h-full rounded-md px-3 overflow-hidden group shadow-sm cursor-move",
+              "relative flex items-center gap-2 w-full h-full rounded-md px-3 overflow-hidden group shadow-sm",
+              attendanceOnClick ? "cursor-pointer" : "cursor-move",
               isDragging && "opacity-40"
             )}
             style={cardStyle}
+            onClick={(e) => {
+              if (!attendanceOnClick) return;
+              e.stopPropagation();
+              onOpenAttendance?.();
+            }}
             onDoubleClick={(e) => {
               e.stopPropagation();
               onOpenAttendance?.();
@@ -196,7 +204,7 @@ const DroppableCell = ({
                 {classroom?.name || '---'}
               </span>
             </div>
-            <button 
+            {!attendanceOnClick && <button 
               onClick={(e) => {
                 e.stopPropagation();
                 onClear();
@@ -205,7 +213,7 @@ const DroppableCell = ({
               className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-blue rounded absolute right-1 top-1 bg-midnight-blue border border-border-blue-gray shadow-none z-10"
             >
               <X className="w-3 h-3" />
-            </button>
+            </button>}
           </motion.div>
         )}
       </AnimatePresence>
@@ -245,6 +253,15 @@ export default function App() {
   const [attendanceTarget, setAttendanceTarget] = useState<TimetableEntry | null>(null);
   const [attendanceMarks, setAttendanceMarks] = useState<Record<string, boolean>>({}); // true means absent
   const [attendanceRecords, setAttendanceRecords] = useState<Record<string, Record<string, boolean>>>({});
+  const [monthlyAttendanceSnapshots, setMonthlyAttendanceSnapshots] = useState<Record<string, {
+    updatedAt: string;
+    classes: Array<{
+      classId: number;
+      className: string;
+      totalLectures: number;
+      lowAttendanceRolls: Array<{ roll: string; pct: number; present: number; total: number }>;
+    }>;
+  }>>({});
   const [autoCreateErrors, setAutoCreateErrors] = useState<string[]>([]);
   const [mondayDate, setMondayDate] = useState<string>(() => {
     const today = new Date();
@@ -254,9 +271,11 @@ export default function App() {
     return monday.toISOString().split('T')[0];
   });
 
-  const [loginStep, setLoginStep] = useState<'choose' | 'incharge_password' | 'under_construction'>('choose');
+  const [loginStep, setLoginStep] = useState<'choose' | 'incharge_password' | 'professor_password' | 'under_construction'>('choose');
   const [inchargeAuthenticated, setInchargeAuthenticated] = useState(false);
+  const [accessRole, setAccessRole] = useState<'incharge' | 'professor' | null>(null);
   const [inchargePassword, setInchargePassword] = useState('');
+  const [professorPassword, setProfessorPassword] = useState('');
   const [inchargeError, setInchargeError] = useState('');
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     if (typeof window === 'undefined') return 'dark';
@@ -270,6 +289,28 @@ export default function App() {
   };
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const canEdit = accessRole === 'incharge';
+  const isProfessorMode = accessRole === 'professor';
+
+  const submitRoleLogin = async (role: 'incharge' | 'professor', password: string) => {
+    try {
+      const res = await fetch('/api/auth/role-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role, password }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.success) {
+        setInchargeError(data?.message || 'Invalid password');
+        return;
+      }
+      setAccessRole(role);
+      setInchargeAuthenticated(true);
+      setInchargeError('');
+    } catch {
+      setInchargeError('Login failed. Please try again.');
+    }
+  };
   const LOCAL_STACKS_KEY = 'timecards.stacks.local.v1';
   const LOCAL_ATTENDANCE_KEY = 'timecards.attendance.local.v1';
 
@@ -355,6 +396,11 @@ export default function App() {
       if (!raw) return;
       const parsed = JSON.parse(raw) as any;
       setAttendanceRecords(parsed?.attendanceRecords && typeof parsed.attendanceRecords === 'object' ? parsed.attendanceRecords : {});
+      setMonthlyAttendanceSnapshots(
+        parsed?.monthlyAttendanceSnapshots && typeof parsed.monthlyAttendanceSnapshots === 'object'
+          ? parsed.monthlyAttendanceSnapshots
+          : {}
+      );
     } catch {
       // Ignore corrupted local storage
     }
@@ -365,11 +411,12 @@ export default function App() {
     try {
       window.localStorage.setItem(LOCAL_ATTENDANCE_KEY, JSON.stringify({
         attendanceRecords,
+        monthlyAttendanceSnapshots,
       }));
     } catch {
       // Ignore quota / storage errors
     }
-  }, [attendanceRecords]);
+  }, [attendanceRecords, monthlyAttendanceSnapshots]);
 
   useEffect(() => {
     if (selectedYear) {
@@ -579,7 +626,7 @@ export default function App() {
   };
 
   const addEntity = (type: 'professors' | 'subjects' | 'classrooms', name: string, extra?: any) => {
-    if (!user) return;
+    if (!user || !canEdit) return;
     if (!name.trim()) return;
 
     if (type === 'professors') {
@@ -625,14 +672,14 @@ export default function App() {
   };
 
   const removeEntity = (type: 'professors' | 'subjects' | 'classrooms', id: number) => {
-    if (!user) return;
+    if (!user || !canEdit) return;
     if (type === 'professors') setProfessors(prev => prev.filter(p => p.id !== id));
     if (type === 'subjects') setSubjects(prev => prev.filter(s => s.id !== id));
     if (type === 'classrooms') setClassrooms(prev => prev.filter(c => c.id !== id));
   };
 
   const onDragStart = (event: DragStartEvent) => {
-    if (!user) return;
+    if (!user || !canEdit) return;
     const { active } = event;
     const [type, ...rest] = (active.id as string).split(':');
     let data: any = null;
@@ -661,7 +708,7 @@ export default function App() {
   const onDragEnd = async (event: DragEndEvent) => {
     const { over, active } = event;
     setActiveDrag(null);
-    if (!over || !user) return;
+    if (!over || !user || !canEdit) return;
 
     const [type, ...activeParts] = (active.id as string).split(':');
     const [targetType, day, slot, classId, batchId] = (over.id as string).split(':');
@@ -714,6 +761,7 @@ export default function App() {
   };
 
   const saveEntry = (entry: any) => {
+    if (!canEdit) return;
     if (entry.professor_id && !entry.exception_flag) {
       const conflicting = timetable.find(t =>
         t.day === entry.day &&
@@ -773,7 +821,7 @@ export default function App() {
   };
 
   const clearCell = (day: number, slot: number, classId: number, batchId: number) => {
-    if (!user) return;
+    if (!user || !canEdit) return;
     setTimetable(prev =>
       prev.filter(t =>
         !(t.day === day && t.time_slot === slot && t.class_id === classId && t.batch_id === batchId)
@@ -782,13 +830,14 @@ export default function App() {
   };
 
   const updateEntity = (type: 'subjects', id: number, data: any) => {
-    if (!user) return;
+    if (!user || !canEdit) return;
     if (type === 'subjects') {
       setSubjects(prev => prev.map(s => (s.id === id ? { ...s, ...data } : s)));
     }
   };
 
   const moveEntry = (entryId: number, day: number, slot: number, classId: number, batchId: number) => {
+    if (!canEdit) return;
     const existing = timetable.find(t => t.id === entryId);
     if (!existing) return;
 
@@ -828,7 +877,7 @@ export default function App() {
   };
 
   const autoCreate = () => {
-    if (!user) return;
+    if (!user || !canEdit) return;
     if (subjects.length === 0) {
       alert("Please add some subjects first.");
       return;
@@ -840,161 +889,6 @@ export default function App() {
     const autoErrors: string[] = [];
     const MAX_HOURS_PER_DAY = 2;
 
-    // For each class and its batches
-    for (const cls of classes) {
-      // Precompute all slots for this class:
-      // - Days in random order
-      // - Within each day, slots left-to-right (9–5)
-      const dayOrder = [0, 1, 2, 3, 4];
-      dayOrder.sort(() => Math.random() - 0.5);
-      let classSlots: { day: number, slot: number }[] = [];
-      for (const d of dayOrder) {
-        for (let s = 0; s < 8; s++) {
-          classSlots.push({ day: d, slot: s });
-        }
-      }
-
-      // Max 2 hours per subject per day (per class for lectures, per batch for labs); other subjects can use remaining slots
-      const lectureHoursPerSubjectPerDay: Record<string, number> = {};
-      const lectureKey = (subId: number, day: number) => `${cls.id}:${subId}:${day}`;
-
-      for (const sub of subjects) {
-        // Respect allowed classes
-        if (sub.allowed_class_ids && sub.allowed_class_ids.length > 0 && !sub.allowed_class_ids.includes(cls.id)) {
-          continue;
-        }
-
-        const mode = sub.mode ?? 'lecture';
-
-        if (mode === 'lecture') {
-          // Allocate hours at class level; max 2 hours per subject per class per day
-          for (let h = 0; h < sub.weightage; h++) {
-            if (classSlots.length === 0) break;
-
-            let found = false;
-            let attempts = 0;
-
-            while (!found && attempts < classSlots.length) {
-              const { day, slot } = classSlots[0];
-
-              const subjectDayCount = lectureHoursPerSubjectPerDay[lectureKey(sub.id, day)] ?? 0;
-              if (subjectDayCount >= MAX_HOURS_PER_DAY) {
-                classSlots.push(classSlots.shift()!);
-                attempts++;
-                continue;
-              }
-
-              const profId = sub.professor_id || (professors[Math.floor(Math.random() * professors.length)]?.id);
-              const lectureRooms = classrooms.filter(r => r.room_type !== 'lab');
-              const eligibleRooms = lectureRooms.filter(r =>
-                !r.allowed_subject_ids?.length || r.allowed_subject_ids.includes(sub.id)
-              );
-              const pool = eligibleRooms.length ? eligibleRooms : lectureRooms;
-              const room = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
-
-              const profKey = `${day}:${slot}:${profId}`;
-              const roomKey = `${day}:${slot}:${room?.id}`;
-
-              const profBusy = profId && profSchedule[profKey];
-              const roomBusy = room && roomSchedule[roomKey];
-
-              if (!profBusy && !roomBusy) {
-                for (const batch of cls.batches) {
-                  newEntries.push({
-                    id: timetableEntryIdCounter++,
-                    day,
-                    time_slot: slot,
-                    class_id: cls.id,
-                    batch_id: batch.id,
-                    subject_id: sub.id,
-                    professor_id: profId || null,
-                    classroom_id: room?.id || null,
-                    exception_flag: false,
-                  });
-                }
-                lectureHoursPerSubjectPerDay[lectureKey(sub.id, day)] = subjectDayCount + 1;
-                if (profId) profSchedule[profKey] = true;
-                if (room) roomSchedule[roomKey] = true;
-                found = true;
-                classSlots.shift();
-              } else {
-                classSlots.push(classSlots.shift()!);
-                attempts++;
-              }
-            }
-            if (!found) {
-              autoErrors.push(`${cls.name}: could not place lecture ${sub.name} (${h + 1}/${sub.weightage}).`);
-            }
-          }
-        } else {
-          // Lab: allocate hours batch-wise; use batch criteria (allowed_batch_ids)
-          const labHoursPerSubjectPerDay: Record<string, number> = {};
-          const labKey = (batchId: number, day: number) => `${cls.id}:${batchId}:${sub.id}:${day}`;
-
-          for (const batch of cls.batches) {
-            if (sub.allowed_batch_ids && sub.allowed_batch_ids.length > 0 && !sub.allowed_batch_ids.includes(batch.id)) continue;
-            let availableSlots = [...classSlots];
-            for (let h = 0; h < sub.weightage; h++) {
-              if (availableSlots.length === 0) break;
-
-              let found = false;
-              let attempts = 0;
-
-              while (!found && attempts < availableSlots.length) {
-                const { day, slot } = availableSlots[0];
-
-                const subjectDayCount = labHoursPerSubjectPerDay[labKey(batch.id, day)] ?? 0;
-                if (subjectDayCount >= MAX_HOURS_PER_DAY) {
-                  availableSlots.push(availableSlots.shift()!);
-                  attempts++;
-                  continue;
-                }
-
-                const profId = sub.professor_id || (professors[Math.floor(Math.random() * professors.length)]?.id);
-                const labRooms = classrooms.filter(r => r.room_type === 'lab');
-                const eligibleRooms = labRooms.filter(r =>
-                  !r.allowed_subject_ids?.length || r.allowed_subject_ids.includes(sub.id)
-                );
-                const pool = eligibleRooms.length ? eligibleRooms : labRooms;
-                const room = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
-
-                const profKey = `${day}:${slot}:${profId}`;
-                const roomKey = `${day}:${slot}:${room?.id}`;
-
-                const profBusy = profId && profSchedule[profKey];
-                const roomBusy = room && roomSchedule[roomKey];
-
-                if (!profBusy && !roomBusy) {
-                  newEntries.push({
-                    id: timetableEntryIdCounter++,
-                    day,
-                    time_slot: slot,
-                    class_id: cls.id,
-                    batch_id: batch.id,
-                    subject_id: sub.id,
-                    professor_id: profId || null,
-                    classroom_id: room?.id || null,
-                    exception_flag: false,
-                  });
-                  labHoursPerSubjectPerDay[labKey(batch.id, day)] = subjectDayCount + 1;
-                  if (profId) profSchedule[profKey] = true;
-                  if (room) roomSchedule[roomKey] = true;
-                  found = true;
-                  availableSlots.shift();
-                } else {
-                  availableSlots.push(availableSlots.shift()!);
-                  attempts++;
-                }
-              }
-              if (!found) {
-                autoErrors.push(`${cls.name} ${batch.name}: could not place lab ${sub.name} (${h + 1}/${sub.weightage}).`);
-              }
-            }
-          }
-        }
-      }
-    }
-
     let lunchProfessor = professors.find(p => p.name === 'Lunch' && p.color === LUNCH_COLOR);
     if (!lunchProfessor) {
       lunchProfessor = { id: professorIdCounter++, name: 'Lunch', color: LUNCH_COLOR };
@@ -1005,8 +899,8 @@ export default function App() {
       lunchSubject = { id: subjectIdCounter++, name: 'Lunch', weightage: 0, mode: 'lecture' as const };
       setSubjects(prev => [...prev, lunchSubject!]);
     }
-
-    const occupied = new Set(newEntries.map(e => `${e.day}:${e.time_slot}:${e.class_id}:${e.batch_id}`));
+    const reservedLunchSlotsByClassDay = new Set<string>(); // classId:day:slot
+    const occupied = new Set<string>();
     for (let classIdx = 0; classIdx < classes.length; classIdx++) {
       const cls = classes[classIdx]!;
       for (let day = 0; day < 5; day++) {
@@ -1025,6 +919,7 @@ export default function App() {
           autoErrors.push(`${cls.name}: could not place Lunch on ${DAYS[day]}.`);
           continue;
         }
+        reservedLunchSlotsByClassDay.add(`${cls.id}:${day}:${selectedSlot}`);
         for (const batch of cls.batches) {
           occupied.add(`${day}:${selectedSlot}:${cls.id}:${batch.id}`);
           newEntries.push({
@@ -1038,6 +933,142 @@ export default function App() {
             classroom_id: null,
             exception_flag: false,
           });
+        }
+      }
+    }
+
+    // For each class and its batches (after lunch reservation)
+    for (const cls of classes) {
+      const dayOrder = [0, 1, 2, 3, 4];
+      dayOrder.sort(() => Math.random() - 0.5);
+      let classSlots: { day: number, slot: number }[] = [];
+      for (const d of dayOrder) {
+        for (let s = 0; s < 8; s++) {
+          if (reservedLunchSlotsByClassDay.has(`${cls.id}:${d}:${s}`)) continue;
+          classSlots.push({ day: d, slot: s });
+        }
+      }
+
+      const lectureHoursPerSubjectPerDay: Record<string, number> = {};
+      const lectureKey = (subId: number, day: number) => `${cls.id}:${subId}:${day}`;
+
+      for (const sub of subjects) {
+        if (sub.allowed_class_ids && sub.allowed_class_ids.length > 0 && !sub.allowed_class_ids.includes(cls.id)) {
+          continue;
+        }
+        const mode = sub.mode ?? 'lecture';
+
+        if (mode === 'lecture') {
+          for (let h = 0; h < sub.weightage; h++) {
+            if (classSlots.length === 0) break;
+            let found = false;
+            let attempts = 0;
+
+            while (!found && attempts < classSlots.length) {
+              const { day, slot } = classSlots[0];
+              const subjectDayCount = lectureHoursPerSubjectPerDay[lectureKey(sub.id, day)] ?? 0;
+              if (subjectDayCount >= MAX_HOURS_PER_DAY) {
+                classSlots.push(classSlots.shift()!);
+                attempts++;
+                continue;
+              }
+
+              const profId = sub.professor_id || (professors[Math.floor(Math.random() * professors.length)]?.id);
+              const lectureRooms = classrooms.filter(r => r.room_type !== 'lab');
+              const eligibleRooms = lectureRooms.filter(r => !r.allowed_subject_ids?.length || r.allowed_subject_ids.includes(sub.id));
+              const pool = eligibleRooms.length ? eligibleRooms : lectureRooms;
+              const room = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
+
+              const profKey = `${day}:${slot}:${profId}`;
+              const roomKey = `${day}:${slot}:${room?.id}`;
+              const profBusy = !!(profId && profSchedule[profKey]);
+              const roomBusy = !!(room && roomSchedule[roomKey]);
+
+              if (!profBusy && !roomBusy) {
+                for (const batch of cls.batches) {
+                  newEntries.push({
+                    id: timetableEntryIdCounter++,
+                    day,
+                    time_slot: slot,
+                    class_id: cls.id,
+                    batch_id: batch.id,
+                    subject_id: sub.id,
+                    professor_id: profId || null,
+                    classroom_id: room?.id || null,
+                    exception_flag: false,
+                  });
+                  occupied.add(`${day}:${slot}:${cls.id}:${batch.id}`);
+                }
+                lectureHoursPerSubjectPerDay[lectureKey(sub.id, day)] = subjectDayCount + 1;
+                if (profId) profSchedule[profKey] = true;
+                if (room) roomSchedule[roomKey] = true;
+                found = true;
+                classSlots.shift();
+              } else {
+                classSlots.push(classSlots.shift()!);
+                attempts++;
+              }
+            }
+            if (!found) autoErrors.push(`${cls.name}: could not place lecture ${sub.name} (${h + 1}/${sub.weightage}).`);
+          }
+        } else {
+          const labHoursPerSubjectPerDay: Record<string, number> = {};
+          const labKey = (batchId: number, day: number) => `${cls.id}:${batchId}:${sub.id}:${day}`;
+
+          for (const batch of cls.batches) {
+            if (sub.allowed_batch_ids && sub.allowed_batch_ids.length > 0 && !sub.allowed_batch_ids.includes(batch.id)) continue;
+            let availableSlots = [...classSlots];
+            for (let h = 0; h < sub.weightage; h++) {
+              if (availableSlots.length === 0) break;
+              let found = false;
+              let attempts = 0;
+
+              while (!found && attempts < availableSlots.length) {
+                const { day, slot } = availableSlots[0];
+                const subjectDayCount = labHoursPerSubjectPerDay[labKey(batch.id, day)] ?? 0;
+                if (subjectDayCount >= MAX_HOURS_PER_DAY) {
+                  availableSlots.push(availableSlots.shift()!);
+                  attempts++;
+                  continue;
+                }
+
+                const profId = sub.professor_id || (professors[Math.floor(Math.random() * professors.length)]?.id);
+                const labRooms = classrooms.filter(r => r.room_type === 'lab');
+                const eligibleRooms = labRooms.filter(r => !r.allowed_subject_ids?.length || r.allowed_subject_ids.includes(sub.id));
+                const pool = eligibleRooms.length ? eligibleRooms : labRooms;
+                const room = pool.length ? pool[Math.floor(Math.random() * pool.length)] : undefined;
+
+                const profKey = `${day}:${slot}:${profId}`;
+                const roomKey = `${day}:${slot}:${room?.id}`;
+                const profBusy = !!(profId && profSchedule[profKey]);
+                const roomBusy = !!(room && roomSchedule[roomKey]);
+
+                if (!profBusy && !roomBusy) {
+                  newEntries.push({
+                    id: timetableEntryIdCounter++,
+                    day,
+                    time_slot: slot,
+                    class_id: cls.id,
+                    batch_id: batch.id,
+                    subject_id: sub.id,
+                    professor_id: profId || null,
+                    classroom_id: room?.id || null,
+                    exception_flag: false,
+                  });
+                  occupied.add(`${day}:${slot}:${cls.id}:${batch.id}`);
+                  labHoursPerSubjectPerDay[labKey(batch.id, day)] = subjectDayCount + 1;
+                  if (profId) profSchedule[profKey] = true;
+                  if (room) roomSchedule[roomKey] = true;
+                  found = true;
+                  availableSlots.shift();
+                } else {
+                  availableSlots.push(availableSlots.shift()!);
+                  attempts++;
+                }
+              }
+              if (!found) autoErrors.push(`${cls.name} ${batch.name}: could not place lab ${sub.name} (${h + 1}/${sub.weightage}).`);
+            }
+          }
         }
       }
     }
@@ -1071,7 +1102,7 @@ export default function App() {
       return {
         mode,
         scopeLabel: 'Batch-wise',
-        rolls: rollNumbersByBatch[entry.batch_id] ?? [],
+        rolls: (rollNumbersByBatch[entry.batch_id] ?? rollNumbersByClass[entry.class_id] ?? []),
         key: `${mondayDate}:${entry.day}:${entry.time_slot}:${entry.class_id}:${entry.batch_id}:lab`,
       };
     }
@@ -1149,6 +1180,19 @@ export default function App() {
     });
   }, [attendanceRecords, classes, rollNumbersByClass, selectedMonthKey]);
 
+  const updateMonthlyAttendance = () => {
+    setMonthlyAttendanceSnapshots((prev) => ({
+      ...prev,
+      [selectedMonthKey]: {
+        updatedAt: new Date().toISOString(),
+        classes: monthlyLectureDefaulters,
+      },
+    }));
+  };
+
+  const monthlyAttendanceToShow = monthlyAttendanceSnapshots[selectedMonthKey]?.classes ?? monthlyLectureDefaulters;
+  const monthlyAttendanceUpdatedAt = monthlyAttendanceSnapshots[selectedMonthKey]?.updatedAt;
+
   if (!inchargeAuthenticated) {
     return (
       <div className={cn("min-h-screen flex items-center justify-center bg-deep-navy p-4", theme === 'light' && "theme-light")}>
@@ -1164,14 +1208,20 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => setLoginStep('under_construction')}
+                onClick={() => {
+                  setLoginStep('professor_password');
+                  setInchargeError('');
+                }}
                 className="w-full py-4 px-6 text-left text-sm font-medium text-muted-teal hover:bg-slate-blue rounded-lg transition-colors"
               >
                 Professor Login
               </button>
               <button
                 type="button"
-                onClick={() => setLoginStep('incharge_password')}
+                onClick={() => {
+                  setLoginStep('incharge_password');
+                  setInchargeError('');
+                }}
                 className="w-full py-4 px-6 text-left text-sm font-medium text-muted-teal hover:bg-slate-blue rounded-lg transition-colors"
               >
                 Incharge Login
@@ -1192,12 +1242,7 @@ export default function App() {
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    if (inchargePassword.trim() === 'timecardsadmin') {
-                      setInchargeAuthenticated(true);
-                      setInchargeError('');
-                    } else {
-                      setInchargeError('Invalid password');
-                    }
+                    submitRoleLogin('incharge', inchargePassword.trim());
                   }
                 }}
                 placeholder="Enter password"
@@ -1217,14 +1262,49 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (inchargePassword.trim() === 'timecardsadmin') {
-                      setInchargeAuthenticated(true);
-                      setInchargeError('');
-                    } else {
-                      setInchargeError('Invalid password');
-                    }
-                  }}
+                  onClick={() => submitRoleLogin('incharge', inchargePassword.trim())}
+                  className="flex-1 py-2 text-sm font-medium bg-muted-teal text-deep-navy rounded-lg hover:opacity-90 transition-opacity"
+                >
+                  Submit
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {loginStep === 'professor_password' && (
+          <div className="w-full max-w-xs flex flex-col gap-4">
+            <div className="rounded-xl border border-border-blue-gray bg-midnight-blue shadow-lg p-6 flex flex-col gap-4">
+              <h2 className="text-lg font-semibold text-muted-teal">Professor login</h2>
+              <input
+                type="password"
+                value={professorPassword}
+                onChange={(e) => {
+                  setProfessorPassword(e.target.value);
+                  setInchargeError('');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    submitRoleLogin('professor', professorPassword.trim());
+                  }
+                }}
+                placeholder="Enter password"
+                className="w-full text-sm border border-border-blue-gray bg-deep-navy text-white px-4 py-3 rounded-lg focus:outline-none focus:ring-1 focus:ring-muted-teal"
+                autoFocus
+              />
+              {inchargeError && (
+                <p className="text-xs text-red-400">{inchargeError}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLoginStep('choose')}
+                  className="flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium border border-border-blue-gray text-muted-steel hover:bg-slate-blue rounded-lg transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4" /> Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => submitRoleLogin('professor', professorPassword.trim())}
                   className="flex-1 py-2 text-sm font-medium bg-muted-teal text-deep-navy rounded-lg hover:opacity-90 transition-opacity"
                 >
                   Submit
@@ -1266,11 +1346,22 @@ export default function App() {
                 <div className="px-4 py-1 text-xs text-muted-teal font-semibold">
                   Monthly Lecture Attendance ({selectedMonthKey})
                 </div>
+                <button
+                  onClick={updateMonthlyAttendance}
+                  className="w-full text-left px-4 py-2 text-xs text-muted-teal hover:bg-slate-blue border-t border-border-blue-gray"
+                >
+                  Update Monthly Attendance
+                </button>
+                <div className="px-4 py-1 text-[10px] text-muted-steel">
+                  {monthlyAttendanceUpdatedAt
+                    ? `Last updated: ${new Date(monthlyAttendanceUpdatedAt).toLocaleString()}`
+                    : 'Using live data (not manually updated yet)'}
+                </div>
                 <div className="border-t border-border-blue-gray mt-1 pt-2 max-h-64 overflow-y-auto custom-scrollbar">
-                  {monthlyLectureDefaulters.every((c) => c.lowAttendanceRolls.length === 0) && (
+                  {monthlyAttendanceToShow.every((c) => c.lowAttendanceRolls.length === 0) && (
                     <div className="px-4 py-2 text-xs text-muted-steel">No students below 75% lecture attendance this month.</div>
                   )}
-                  {monthlyLectureDefaulters.map((c) => (
+                  {monthlyAttendanceToShow.map((c) => (
                     <div key={c.classId} className="px-4 py-2 border-b border-border-blue-gray/40 last:border-b-0">
                       <div className="text-xs text-muted-teal font-semibold">
                         {c.className} ({c.totalLectures} lectures)
@@ -1291,7 +1382,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <div className="relative group">
+            <div className={cn("relative group", isProfessorMode && "pointer-events-none opacity-50")}>
               <button className="flex items-center gap-2 text-sm font-medium hover:text-muted-teal transition-colors">
                 {selectedYear?.name} <ChevronDown className="w-4 h-4" />
               </button>
@@ -1369,6 +1460,7 @@ export default function App() {
                 type="date" 
                 value={mondayDate}
                 onChange={(e) => setMondayDate(e.target.value)}
+                disabled={isProfessorMode}
                 className="bg-deep-navy border border-border-blue-gray text-[10px] text-white p-1 rounded focus:outline-none focus:ring-1 focus:ring-muted-teal"
               />
             </div>
@@ -1385,11 +1477,13 @@ export default function App() {
                   <button
                     key={day}
                     onClick={() => setActiveDay(idx)}
+                    disabled={isProfessorMode}
                     className={cn(
                       "px-6 py-2 text-sm font-medium rounded-t-md transition-all border-b-2",
                       activeDay === idx 
                         ? "bg-midnight-blue border-muted-teal text-muted-teal shadow-none" 
-                        : "text-muted-steel border-transparent hover:bg-midnight-blue/50"
+                        : "text-muted-steel border-transparent hover:bg-midnight-blue/50",
+                      isProfessorMode && "opacity-60 cursor-not-allowed"
                     )}
                   >
                     {day}
@@ -1442,6 +1536,7 @@ export default function App() {
                                       entry={entry}
                                       onClear={() => clearCell(activeDay, sIdx, cls.id, batch.id)}
                                       onOpenAttendance={() => entry && openAttendance(entry)}
+                                      attendanceOnClick={isProfessorMode}
                                       professors={professors}
                                       subjects={subjects}
                                       classrooms={classrooms}
@@ -1468,7 +1563,7 @@ export default function App() {
                 animate={{ x: 0 }}
                 exit={{ x: '100%' }}
                 transition={{ duration: 0.2 }}
-                className="w-80 border-l border-border-blue-gray bg-midnight-blue p-6 overflow-y-auto flex flex-col"
+                className={cn("w-80 border-l border-border-blue-gray bg-midnight-blue p-6 overflow-y-auto flex flex-col", isProfessorMode && "pointer-events-none opacity-60")}
               >
                 <div className="mb-8 pb-8 border-b border-border-blue-gray space-y-3">
                   <button 
@@ -1516,16 +1611,24 @@ export default function App() {
                     <RollNumberManager
                       classes={classes}
                       rollRangeByClass={rollRangeByClass}
-                      rollRangeByBatch={rollRangeByBatch}
                       rollNumbersByClass={rollNumbersByClass}
-                      rollNumbersByBatch={rollNumbersByBatch}
                       onUpdateClassRange={(classId, range) => {
+                        const cls = classes.find((c) => c.id === classId);
+                        const generated = parseRollRangeInput(range);
                         setRollRangeByClass((prev) => ({ ...prev, [classId]: range }));
-                        setRollNumbersByClass((prev) => ({ ...prev, [classId]: parseRollRangeInput(range) }));
-                      }}
-                      onUpdateBatchRange={(batchId, range) => {
-                        setRollRangeByBatch((prev) => ({ ...prev, [batchId]: range }));
-                        setRollNumbersByBatch((prev) => ({ ...prev, [batchId]: parseRollRangeInput(range) }));
+                        setRollNumbersByClass((prev) => ({ ...prev, [classId]: generated }));
+                        if (cls) {
+                          setRollRangeByBatch((prev) => {
+                            const next = { ...prev };
+                            for (const batch of cls.batches) next[batch.id] = range;
+                            return next;
+                          });
+                          setRollNumbersByBatch((prev) => {
+                            const next = { ...prev };
+                            for (const batch of cls.batches) next[batch.id] = generated;
+                            return next;
+                          });
+                        }
                       }}
                     />
                   </div>
@@ -1571,7 +1674,10 @@ export default function App() {
           {/* Sidebar toggle handle - moves with sidebar collapse */}
           <button
             type="button"
-            onClick={() => setIsSidebarCollapsed((v) => !v)}
+            onClick={() => {
+              if (isProfessorMode) return;
+              setIsSidebarCollapsed((v) => !v);
+            }}
             className={cn(
               "absolute top-6 -translate-x-1/2 z-20 bg-midnight-blue border border-border-blue-gray rounded-full w-7 h-7 flex items-center justify-center hover:bg-slate-blue transition-all duration-200",
               isSidebarCollapsed ? "right-0" : "right-80"
@@ -1591,6 +1697,7 @@ export default function App() {
           type="button"
           onClick={() => setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))}
           className="fixed bottom-4 right-4 z-40 bg-midnight-blue border border-border-blue-gray rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-blue transition-colors"
+          disabled={isProfessorMode}
           aria-label="Toggle theme"
         >
           <Settings className="w-5 h-5 text-muted-steel" />
@@ -2261,44 +2368,28 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
 const RollNumberManager = ({
   classes,
   rollRangeByClass,
-  rollRangeByBatch,
   rollNumbersByClass,
-  rollNumbersByBatch,
   onUpdateClassRange,
-  onUpdateBatchRange,
 }: {
   classes: ClassWithBatches[];
   rollRangeByClass: Record<number, string>;
-  rollRangeByBatch: Record<number, string>;
   rollNumbersByClass: Record<number, string[]>;
-  rollNumbersByBatch: Record<number, string[]>;
   onUpdateClassRange: (classId: number, value: string) => void;
-  onUpdateBatchRange: (batchId: number, value: string) => void;
 }) => {
   return (
     <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
       {classes.map((cls) => (
         <div key={`class-roll-${cls.id}`} className="border border-border-blue-gray rounded-md p-2 bg-deep-navy/40 space-y-1">
-          <label className="text-[10px] uppercase tracking-widest text-muted-steel">{cls.name} (Class-wise / Lecture range)</label>
+          <label className="text-[10px] uppercase tracking-widest text-muted-steel">{cls.name} (shared for A1/A2/A3 and lectures)</label>
           <input
             value={rollRangeByClass[cls.id] ?? ''}
             onChange={(e) => onUpdateClassRange(cls.id, e.target.value)}
             className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded"
             placeholder="e.g. 1-60"
           />
-          <div className="text-[10px] text-muted-steel">{(rollNumbersByClass[cls.id] ?? []).length} rolls generated</div>
-          {cls.batches.map((batch) => (
-            <div key={`batch-roll-${batch.id}`} className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-muted-steel">{batch.name} (Batch-wise / Lab range)</label>
-              <input
-                value={rollRangeByBatch[batch.id] ?? ''}
-                onChange={(e) => onUpdateBatchRange(batch.id, e.target.value)}
-                className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded"
-                placeholder="e.g. 1-20"
-              />
-              <div className="text-[10px] text-muted-steel">{(rollNumbersByBatch[batch.id] ?? []).length} rolls generated</div>
-            </div>
-          ))}
+          <div className="text-[10px] text-muted-steel">
+            {(rollNumbersByClass[cls.id] ?? []).length} rolls generated and auto-applied to {cls.batches.map((b) => b.name).join(', ')}
+          </div>
         </div>
       ))}
     </div>

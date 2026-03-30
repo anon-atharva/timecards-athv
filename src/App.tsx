@@ -129,6 +129,7 @@ const DroppableCell = ({
   batchId, 
   entry, 
   onClear,
+  onOpenAttendance,
   professors,
   subjects,
   classrooms
@@ -139,6 +140,7 @@ const DroppableCell = ({
   batchId: number, 
   entry?: TimetableEntry,
   onClear: () => void,
+  onOpenAttendance?: () => void,
   professors: Professor[],
   subjects: Subject[],
   classrooms: Classroom[]
@@ -178,6 +180,10 @@ const DroppableCell = ({
               isDragging && "opacity-40"
             )}
             style={cardStyle}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              onOpenAttendance?.();
+            }}
           >
             <div className="flex flex-col leading-snug flex-1 truncate text-black">
               <span className="font-bold italic text-sm truncate">
@@ -232,6 +238,11 @@ export default function App() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const [hasLoadedSavedStacks, setHasLoadedSavedStacks] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [rollNumbersByClass, setRollNumbersByClass] = useState<Record<number, string[]>>({});
+  const [rollNumbersByBatch, setRollNumbersByBatch] = useState<Record<number, string[]>>({});
+  const [attendanceTarget, setAttendanceTarget] = useState<TimetableEntry | null>(null);
+  const [attendanceMarks, setAttendanceMarks] = useState<Record<string, boolean>>({});
+  const [attendanceRecords, setAttendanceRecords] = useState<Record<string, Record<string, boolean>>>({});
   const [mondayDate, setMondayDate] = useState<string>(() => {
     const today = new Date();
     const day = today.getDay();
@@ -329,6 +340,10 @@ export default function App() {
     professors: Array<{ name: string; color?: string }>;
     subjects: Array<{ name: string; weightage?: number; professor?: string; allowedClasses?: string[]; allowedBatches?: string[]; mode?: 'lecture' | 'lab' }>;
     classrooms: Array<{ name: string; roomType?: 'lecture' | 'lab'; allowedSubjects?: string[] }>;
+    rollNumbers?: {
+      classes: Array<{ className: string; rollNumbers: string[] }>;
+      batches: Array<{ batchName: string; rollNumbers: string[] }>;
+    };
   };
 
   const normalizeColor = (c: unknown) => {
@@ -364,6 +379,20 @@ export default function App() {
         roomType: c.room_type,
         allowedSubjects: (c.allowed_subject_ids ?? []).map(id => subjectNameById.get(id)).filter((x): x is string => typeof x === 'string'),
       })),
+      rollNumbers: {
+        classes: Object.entries(rollNumbersByClass)
+          .map(([classId, rollNumbers]) => ({
+            className: classNameById.get(Number(classId)) ?? '',
+            rollNumbers,
+          }))
+          .filter((x) => !!x.className),
+        batches: Object.entries(rollNumbersByBatch)
+          .map(([batchId, rollNumbers]) => ({
+            batchName: batchNameById.get(Number(batchId)) ?? '',
+            rollNumbers,
+          }))
+          .filter((x) => !!x.batchName),
+      },
     };
 
     const text = JSON.stringify(file, null, 2);
@@ -470,9 +499,35 @@ export default function App() {
       });
     }
 
+    const nextRollNumbersByClass: Record<number, string[]> = {};
+    const importedClassRolls = Array.isArray(parsed?.rollNumbers?.classes) ? parsed.rollNumbers.classes : [];
+    for (const item of importedClassRolls) {
+      const className = typeof item?.className === 'string' ? item.className.trim() : '';
+      const classId = className ? classIdByName.get(className) : undefined;
+      if (!classId) continue;
+      const rolls = Array.isArray(item?.rollNumbers) ? item.rollNumbers : [];
+      nextRollNumbersByClass[classId] = Array.from(new Set(
+        rolls.map((r: any) => (typeof r === 'string' ? r.trim() : '')).filter((r: string) => !!r)
+      ));
+    }
+
+    const nextRollNumbersByBatch: Record<number, string[]> = {};
+    const importedBatchRolls = Array.isArray(parsed?.rollNumbers?.batches) ? parsed.rollNumbers.batches : [];
+    for (const item of importedBatchRolls) {
+      const batchName = typeof item?.batchName === 'string' ? item.batchName.trim() : '';
+      const batchId = batchName ? batchIdByName.get(batchName) : undefined;
+      if (!batchId) continue;
+      const rolls = Array.isArray(item?.rollNumbers) ? item.rollNumbers : [];
+      nextRollNumbersByBatch[batchId] = Array.from(new Set(
+        rolls.map((r: any) => (typeof r === 'string' ? r.trim() : '')).filter((r: string) => !!r)
+      ));
+    }
+
     setProfessors(nextProfessors);
     setSubjects(nextSubjects);
     setClassrooms(nextClassrooms);
+    setRollNumbersByClass(nextRollNumbersByClass);
+    setRollNumbersByBatch(nextRollNumbersByBatch);
     setTimetable([]); // imported stacks would otherwise mismatch old IDs
     reseedCountersFromStacks({ professors: nextProfessors, subjects: nextSubjects, classrooms: nextClassrooms });
     alert('Imported stacks successfully.');
@@ -932,6 +987,44 @@ export default function App() {
     setTimetable(prev => [...prev, ...newEntries]);
   };
 
+  const parseRollInput = (value: string) =>
+    Array.from(new Set(value.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)));
+
+  const getAttendanceContext = (entry: TimetableEntry) => {
+    const subject = subjects.find((s) => s.id === entry.subject_id);
+    const mode = subject?.mode ?? 'lecture';
+    if (mode === 'lab') {
+      return {
+        mode,
+        scopeLabel: 'Batch-wise',
+        rolls: rollNumbersByBatch[entry.batch_id] ?? [],
+        key: `${entry.day}:${entry.time_slot}:${entry.class_id}:${entry.batch_id}:lab`,
+      };
+    }
+    return {
+      mode,
+      scopeLabel: 'Class-wise',
+      rolls: rollNumbersByClass[entry.class_id] ?? [],
+      key: `${entry.day}:${entry.time_slot}:${entry.class_id}:lecture`,
+    };
+  };
+
+  const openAttendance = (entry: TimetableEntry) => {
+    const ctx = getAttendanceContext(entry);
+    const existing = attendanceRecords[ctx.key] ?? {};
+    const seed: Record<string, boolean> = {};
+    for (const roll of ctx.rolls) seed[roll] = !!existing[roll];
+    setAttendanceTarget(entry);
+    setAttendanceMarks(seed);
+  };
+
+  const saveAttendance = () => {
+    if (!attendanceTarget) return;
+    const ctx = getAttendanceContext(attendanceTarget);
+    setAttendanceRecords((prev) => ({ ...prev, [ctx.key]: attendanceMarks }));
+    setAttendanceTarget(null);
+  };
+
   if (!inchargeAuthenticated) {
     return (
       <div className={cn("min-h-screen flex items-center justify-center bg-deep-navy p-4", theme === 'light' && "theme-light")}>
@@ -1191,6 +1284,7 @@ export default function App() {
                                       batchId={batch.id}
                                       entry={entry}
                                       onClear={() => clearCell(activeDay, sIdx, cls.id, batch.id)}
+                                      onOpenAttendance={() => entry && openAttendance(entry)}
                                       professors={professors}
                                       subjects={subjects}
                                       classrooms={classrooms}
@@ -1257,6 +1351,21 @@ export default function App() {
                     subjects={subjects}
                   />
                   <div className="border-t border-border-blue-gray my-4" />
+                  <div className="pt-4 space-y-3">
+                    <h4 className="text-[10px] text-muted-steel text-center uppercase tracking-widest">Roll Numbers (Attendance)</h4>
+                    <RollNumberManager
+                      classes={classes}
+                      rollNumbersByClass={rollNumbersByClass}
+                      rollNumbersByBatch={rollNumbersByBatch}
+                      onUpdateClass={(classId, text) => {
+                        setRollNumbersByClass((prev) => ({ ...prev, [classId]: parseRollInput(text) }));
+                      }}
+                      onUpdateBatch={(batchId, text) => {
+                        setRollNumbersByBatch((prev) => ({ ...prev, [batchId]: parseRollInput(text) }));
+                      }}
+                    />
+                  </div>
+                  <div className="border-t border-border-blue-gray my-4" />
                   <div className="pt-4 space-y-2">
                     <input
                       ref={importInputRef}
@@ -1287,7 +1396,7 @@ export default function App() {
                       IMPORT STACKS
                     </button>
                     <p className="text-[10px] text-muted-steel text-center uppercase tracking-widest">
-                      Saves Subjects, Professors, Classrooms
+                      Saves Subjects, Professors, Classrooms, Roll Numbers
                     </p>
                   </div>
                 </div>
@@ -1358,6 +1467,50 @@ export default function App() {
               </motion.div>
             </div>
           )}
+        </AnimatePresence>
+
+        {/* Attendance Modal */}
+        <AnimatePresence>
+          {attendanceTarget && (() => {
+            const ctx = getAttendanceContext(attendanceTarget);
+            const cls = classes.find(c => c.id === attendanceTarget.class_id) || allClasses.find(c => c.id === attendanceTarget.class_id);
+            const batch = cls?.batches.find(b => b.id === attendanceTarget.batch_id);
+            const subject = subjects.find(s => s.id === attendanceTarget.subject_id);
+            return (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-deep-navy/80">
+                <motion.div
+                  initial={{ scale: 0.95, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.95, opacity: 0 }}
+                  className="bg-midnight-blue rounded-lg shadow-none border border-border-blue-gray w-full max-w-md p-6"
+                >
+                  <h3 className="text-lg font-semibold text-muted-teal mb-1">Attendance</h3>
+                  <p className="text-xs text-muted-steel mb-4">
+                    {subject?.name ?? 'Subject'} - {ctx.scopeLabel} ({cls?.name ?? 'Class'}{ctx.mode === 'lab' ? ` / ${batch?.name ?? 'Batch'}` : ''})
+                  </p>
+                  <div className="max-h-72 overflow-y-auto border border-border-blue-gray rounded-md p-2 space-y-1">
+                    {ctx.rolls.length === 0 && (
+                      <div className="text-xs text-muted-steel p-2">No roll numbers found. Add them in the sidebar Roll Numbers section.</div>
+                    )}
+                    {ctx.rolls.map(roll => (
+                      <label key={roll} className="flex items-center gap-2 text-sm p-1.5 hover:bg-slate-blue rounded">
+                        <input
+                          type="checkbox"
+                          checked={!!attendanceMarks[roll]}
+                          onChange={(e) => setAttendanceMarks(prev => ({ ...prev, [roll]: e.target.checked }))}
+                        />
+                        <span>{roll}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 mt-4">
+                    <button className="flex-1 btn-outline" onClick={() => setAttendanceTarget(null)}>Cancel</button>
+                    <button className="flex-1 btn-teal" onClick={saveAttendance}>Save Attendance</button>
+                  </div>
+                </motion.div>
+              </div>
+            );
+          })()}
         </AnimatePresence>
 
         {/* Drag Overlay */}
@@ -1552,7 +1705,7 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
         </button>
       </div>
       
-      <div className="grid grid-cols-3 gap-2 mb-4">
+      <div className="grid grid-cols-2 gap-2 mb-4">
         {items.map(item => (
           <DraggableItem 
             key={item.id} 
@@ -1914,6 +2067,47 @@ const SidebarSection = ({ title, items, type, onAdd, onRemove, onUpdate, profess
           />
         </div>
       )}
+    </div>
+  );
+};
+
+const RollNumberManager = ({
+  classes,
+  rollNumbersByClass,
+  rollNumbersByBatch,
+  onUpdateClass,
+  onUpdateBatch,
+}: {
+  classes: ClassWithBatches[];
+  rollNumbersByClass: Record<number, string[]>;
+  rollNumbersByBatch: Record<number, string[]>;
+  onUpdateClass: (classId: number, value: string) => void;
+  onUpdateBatch: (batchId: number, value: string) => void;
+}) => {
+  return (
+    <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+      {classes.map((cls) => (
+        <div key={`class-roll-${cls.id}`} className="border border-border-blue-gray rounded-md p-2 bg-deep-navy/40 space-y-1">
+          <label className="text-[10px] uppercase tracking-widest text-muted-steel">{cls.name} (Class-wise / Lecture)</label>
+          <textarea
+            value={(rollNumbersByClass[cls.id] ?? []).join(', ')}
+            onChange={(e) => onUpdateClass(cls.id, e.target.value)}
+            className="w-full min-h-12 text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded resize-y"
+            placeholder="e.g. 101, 102, 103"
+          />
+          {cls.batches.map((batch) => (
+            <div key={`batch-roll-${batch.id}`} className="space-y-1">
+              <label className="text-[10px] uppercase tracking-widest text-muted-steel">{batch.name} (Batch-wise / Lab)</label>
+              <textarea
+                value={(rollNumbersByBatch[batch.id] ?? []).join(', ')}
+                onChange={(e) => onUpdateBatch(batch.id, e.target.value)}
+                className="w-full min-h-10 text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded resize-y"
+                placeholder="e.g. 101A, 101B"
+              />
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 };

@@ -1067,18 +1067,30 @@ export default function App() {
     return Array.from(new Set(out));
   };
 
-  const partitionRollsForBatches = (rolls: string[], batchCount: number) => {
-    if (batchCount <= 0) return [];
-    const base = Math.floor(rolls.length / batchCount);
-    const remainder = rolls.length % batchCount;
-    const chunks: string[][] = [];
-    let cursor = 0;
-    for (let i = 0; i < batchCount; i++) {
-      const size = base + (i < remainder ? 1 : 0);
-      chunks.push(rolls.slice(cursor, cursor + size));
-      cursor += size;
+  const normalizeRollSortKey = (roll: string) => {
+    const n = Number(roll);
+    if (Number.isFinite(n)) return { type: 0 as const, n };
+    return { type: 1 as const, n: 0 };
+  };
+
+  const sortRolls = (rolls: string[]) =>
+    [...rolls].sort((a, b) => {
+      const ak = normalizeRollSortKey(a);
+      const bk = normalizeRollSortKey(b);
+      if (ak.type !== bk.type) return ak.type - bk.type;
+      if (ak.type === 0) return ak.n - bk.n;
+      return a.localeCompare(b);
+    });
+
+  const computeCompactRangeLabel = (rolls: string[]) => {
+    if (rolls.length === 0) return '';
+    const nums = rolls.map(r => Number(r));
+    if (nums.some(n => !Number.isFinite(n))) return '';
+    const sorted = [...nums].sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i] !== sorted[i - 1]! + 1) return '';
     }
-    return chunks;
+    return `${sorted[0]}-${sorted[sorted.length - 1]}`;
   };
 
   const getAttendanceContext = (entry: TimetableEntry) => {
@@ -1652,34 +1664,33 @@ export default function App() {
                       rollNumbersByClass={rollNumbersByClass}
                       rollNumbersByBatch={rollNumbersByBatch}
                       disabled={!canEdit}
-                      onUpdateClassRange={(classId, range) => {
+                      onUpdateClassRange={() => {
+                        // batch-driven now
+                      }}
+                      onUpdateBatchRange={(batchId, range) => {
                         if (!canEdit) return;
-                        const cls = classes.find((c) => c.id === classId);
-                        const generated = parseRollRangeInput(range);
-                        const partitions = cls ? partitionRollsForBatches(generated, cls.batches.length) : [];
-                        setRollRangeByClass((prev) => ({ ...prev, [classId]: range }));
-                        setRollNumbersByClass((prev) => ({ ...prev, [classId]: generated }));
-                        if (cls) {
-                          setRollRangeByBatch((prev) => {
-                            const next = { ...prev };
-                            for (let i = 0; i < cls.batches.length; i++) {
-                              const batch = cls.batches[i]!;
-                              const chunk = partitions[i] ?? [];
-                              const first = chunk[0];
-                              const last = chunk[chunk.length - 1];
-                              next[batch.id] = chunk.length ? `${first}-${last}` : '';
-                            }
-                            return next;
-                          });
-                          setRollNumbersByBatch((prev) => {
-                            const next = { ...prev };
-                            for (let i = 0; i < cls.batches.length; i++) {
-                              const batch = cls.batches[i]!;
-                              next[batch.id] = partitions[i] ?? [];
-                            }
-                            return next;
-                          });
+                        const ownerClass = classes.find((c) => c.batches.some((b) => b.id === batchId));
+                        if (!ownerClass) return;
+
+                        const batchRolls = sortRolls(parseRollRangeInput(range));
+
+                        setRollRangeByBatch((prev) => ({ ...prev, [batchId]: range }));
+                        setRollNumbersByBatch((prev) => ({ ...prev, [batchId]: batchRolls }));
+
+                        // derive class rolls from all 3 batches (or N batches)
+                        const nextBatchRollsById = new Map<number, string[]>();
+                        for (const b of ownerClass.batches) {
+                          if (b.id === batchId) nextBatchRollsById.set(b.id, batchRolls);
+                          else nextBatchRollsById.set(b.id, rollNumbersByBatch[b.id] ?? []);
                         }
+
+                        const combined = sortRolls(
+                          Array.from(new Set(ownerClass.batches.flatMap((b) => nextBatchRollsById.get(b.id) ?? [])))
+                        );
+
+                        setRollNumbersByClass((prev) => ({ ...prev, [ownerClass.id]: combined }));
+                        const compact = computeCompactRangeLabel(combined);
+                        setRollRangeByClass((prev) => ({ ...prev, [ownerClass.id]: compact }));
                       }}
                     />
                   </div>
@@ -2427,6 +2438,7 @@ const RollNumberManager = ({
   rollNumbersByBatch,
   disabled,
   onUpdateClassRange,
+  onUpdateBatchRange,
 }: {
   classes: ClassWithBatches[];
   rollRangeByClass: Record<number, string>;
@@ -2435,30 +2447,29 @@ const RollNumberManager = ({
   rollNumbersByBatch: Record<number, string[]>;
   disabled?: boolean;
   onUpdateClassRange: (classId: number, value: string) => void;
+  onUpdateBatchRange: (batchId: number, value: string) => void;
 }) => {
   return (
     <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
       {classes.map((cls) => (
         <div key={`class-roll-${cls.id}`} className="border border-border-blue-gray rounded-md p-2 bg-deep-navy/40 space-y-1">
-          <label className="text-[10px] uppercase tracking-widest text-muted-steel">{cls.name} (batch list; shared across {cls.batches.map((b) => b.name).join('/')})</label>
-          <input
-            value={rollRangeByClass[cls.id] ?? ''}
-            onChange={(e) => onUpdateClassRange(cls.id, e.target.value)}
-            disabled={disabled}
-            className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded"
-            placeholder="e.g. 1-60"
-          />
+          <label className="text-[10px] uppercase tracking-widest text-muted-steel">{cls.name} (edit batches; class list auto-derives)</label>
           <div className="text-[10px] text-muted-steel">
-            {(rollNumbersByClass[cls.id] ?? []).length} rolls generated and auto-applied to {cls.batches.map((b) => b.name).join(', ')}
+            Lecture rolls: {(rollNumbersByClass[cls.id] ?? []).length}
+            {rollRangeByClass[cls.id] ? ` (${rollRangeByClass[cls.id]})` : ''}
           </div>
           <div className="grid grid-cols-3 gap-1">
             {cls.batches.map((batch) => (
               <div key={`batch-edit-${batch.id}`} className="space-y-1">
                 <label className="text-[10px] text-muted-steel">{batch.name}</label>
-                <div className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1 rounded min-h-[24px]">
-                  {rollRangeByBatch[batch.id] ?? '-'}
-                </div>
-                <div className="text-[10px] text-muted-steel text-center">{(rollNumbersByBatch[batch.id] ?? rollNumbersByClass[cls.id] ?? []).length}</div>
+                <input
+                  value={rollRangeByBatch[batch.id] ?? ''}
+                  onChange={(e) => onUpdateBatchRange(batch.id, e.target.value)}
+                  disabled={disabled}
+                  className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1 rounded"
+                  placeholder="e.g. 1-20"
+                />
+                <div className="text-[10px] text-muted-steel text-center">{(rollNumbersByBatch[batch.id] ?? []).length}</div>
               </div>
             ))}
           </div>

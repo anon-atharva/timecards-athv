@@ -1067,13 +1067,6 @@ export default function App() {
     return Array.from(new Set(out));
   };
 
-  const getClassRollsFromBatches = (classId: number) => {
-    const cls = classes.find((c) => c.id === classId);
-    if (!cls) return rollNumbersByClass[classId] ?? [];
-    const merged = cls.batches.flatMap((b) => rollNumbersByBatch[b.id] ?? []);
-    return Array.from(new Set(merged));
-  };
-
   const getAttendanceContext = (entry: TimetableEntry) => {
     const subject = subjects.find((s) => s.id === entry.subject_id);
     const mode = subject?.mode ?? 'lecture';
@@ -1088,7 +1081,7 @@ export default function App() {
     return {
       mode,
       scopeLabel: 'Class-wise',
-      rolls: getClassRollsFromBatches(entry.class_id),
+      rolls: rollNumbersByClass[entry.class_id] ?? [],
       key: `${mondayDate}:${entry.day}:${entry.time_slot}:${entry.class_id}:lecture`,
     };
   };
@@ -1152,7 +1145,7 @@ export default function App() {
     return classes.map((cls) => {
       const classId = cls.id;
       const totalLectures = monthlyLectureSessionsByClass[classId] ?? 0;
-      const rolls = getClassRollsFromBatches(classId);
+      const rolls = rollNumbersByClass[classId] ?? [];
 
       const lowAttendanceRolls = rolls
         .map((roll) => {
@@ -1171,7 +1164,7 @@ export default function App() {
         lowAttendanceRolls,
       };
     });
-  }, [attendanceRecords, classes, rollNumbersByBatch, rollNumbersByClass, selectedMonthKey]);
+  }, [attendanceRecords, classes, rollNumbersByClass, selectedMonthKey]);
 
   const updateMonthlyAttendance = () => {
     setMonthlyAttendanceSnapshots((prev) => ({
@@ -1645,19 +1638,40 @@ export default function App() {
                       rollNumbersByClass={rollNumbersByClass}
                       rollNumbersByBatch={rollNumbersByBatch}
                       disabled={!canEdit}
+                      onUpdateClassRange={(classId, range) => {
+                        if (!canEdit) return;
+                        const cls = classes.find((c) => c.id === classId);
+                        const generated = parseRollRangeInput(range);
+                        setRollRangeByClass((prev) => ({ ...prev, [classId]: range }));
+                        setRollNumbersByClass((prev) => ({ ...prev, [classId]: generated }));
+                        if (cls) {
+                          setRollRangeByBatch((prev) => {
+                            const next = { ...prev };
+                            for (const batch of cls.batches) next[batch.id] = range;
+                            return next;
+                          });
+                          setRollNumbersByBatch((prev) => {
+                            const next = { ...prev };
+                            for (const batch of cls.batches) next[batch.id] = generated;
+                            return next;
+                          });
+                        }
+                      }}
                       onUpdateBatchRange={(batchId, range) => {
                         if (!canEdit) return;
+                        const ownerClass = classes.find((c) => c.batches.some((b) => b.id === batchId));
+                        if (!ownerClass) return;
                         const generated = parseRollRangeInput(range);
-                        setRollRangeByBatch((prev) => ({ ...prev, [batchId]: range }));
+                        setRollRangeByClass((prev) => ({ ...prev, [ownerClass.id]: range }));
+                        setRollNumbersByClass((prev) => ({ ...prev, [ownerClass.id]: generated }));
+                        setRollRangeByBatch((prev) => {
+                          const next = { ...prev };
+                          for (const batch of ownerClass.batches) next[batch.id] = range;
+                          return next;
+                        });
                         setRollNumbersByBatch((prev) => {
-                          const next = { ...prev, [batchId]: generated };
-                          const ownerClass = classes.find((c) => c.batches.some((b) => b.id === batchId));
-                          if (ownerClass) {
-                            const classMerged = Array.from(new Set(
-                              ownerClass.batches.flatMap((b) => next[b.id] ?? [])
-                            ));
-                            setRollNumbersByClass((classPrev) => ({ ...classPrev, [ownerClass.id]: classMerged }));
-                          }
+                          const next = { ...prev };
+                          for (const batch of ownerClass.batches) next[batch.id] = generated;
                           return next;
                         });
                       }}
@@ -2406,6 +2420,7 @@ const RollNumberManager = ({
   rollNumbersByClass,
   rollNumbersByBatch,
   disabled,
+  onUpdateClassRange,
   onUpdateBatchRange,
 }: {
   classes: ClassWithBatches[];
@@ -2414,28 +2429,38 @@ const RollNumberManager = ({
   rollNumbersByClass: Record<number, string[]>;
   rollNumbersByBatch: Record<number, string[]>;
   disabled?: boolean;
+  onUpdateClassRange: (classId: number, value: string) => void;
   onUpdateBatchRange: (batchId: number, value: string) => void;
 }) => {
   return (
     <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
       {classes.map((cls) => (
         <div key={`class-roll-${cls.id}`} className="border border-border-blue-gray rounded-md p-2 bg-deep-navy/40 space-y-1">
-          <label className="text-[10px] uppercase tracking-widest text-muted-steel">{cls.name} (batch-wise list)</label>
-          {cls.batches.map((batch) => (
-            <div key={`batch-roll-${batch.id}`} className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-muted-steel">{batch.name}</label>
-              <input
-                value={rollRangeByBatch[batch.id] ?? ''}
-                onChange={(e) => onUpdateBatchRange(batch.id, e.target.value)}
-                disabled={disabled}
-                className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded"
-                placeholder="e.g. 1-20"
-              />
-              <div className="text-[10px] text-muted-steel">{(rollNumbersByBatch[batch.id] ?? []).length} rolls generated</div>
-            </div>
-          ))}
+          <label className="text-[10px] uppercase tracking-widest text-muted-steel">{cls.name} (batch list; shared across {cls.batches.map((b) => b.name).join('/')})</label>
+          <input
+            value={rollRangeByClass[cls.id] ?? ''}
+            onChange={(e) => onUpdateClassRange(cls.id, e.target.value)}
+            disabled={disabled}
+            className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1.5 rounded"
+            placeholder="e.g. 1-60"
+          />
           <div className="text-[10px] text-muted-steel">
-            Class roll list carried from {cls.batches.map((b) => b.name).join(', ')}: {(rollNumbersByClass[cls.id] ?? []).length} unique rolls
+            {(rollNumbersByClass[cls.id] ?? []).length} rolls generated and auto-applied to {cls.batches.map((b) => b.name).join(', ')}
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            {cls.batches.map((batch) => (
+              <div key={`batch-edit-${batch.id}`} className="space-y-1">
+                <label className="text-[10px] text-muted-steel">{batch.name}</label>
+                <input
+                  value={rollRangeByBatch[batch.id] ?? rollRangeByClass[cls.id] ?? ''}
+                  onChange={(e) => onUpdateBatchRange(batch.id, e.target.value)}
+                  disabled={disabled}
+                  className="w-full text-xs border border-border-blue-gray bg-midnight-blue text-white p-1 rounded"
+                  placeholder="1-60"
+                />
+                <div className="text-[10px] text-muted-steel text-center">{(rollNumbersByBatch[batch.id] ?? rollNumbersByClass[cls.id] ?? []).length}</div>
+              </div>
+            ))}
           </div>
         </div>
       ))}
